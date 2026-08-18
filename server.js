@@ -9,7 +9,7 @@ const os = require("os");
 
 const app = express();
 // Força o caminho do Chrome para o puppeteer-real-browser achar no Easypanel
-process.env.CHROME_PATH = process.env.CHROME_PATH || '/usr/bin/chromium';
+process.env.CHROME_PATH = process.env.CHROME_PATH || "/usr/bin/chromium";
 const LOCAL_AUDIO_PATH = path.join(__dirname, "audio", "audio.mp3");
 const VIDEO_DURATION_SECONDS = 30;
 const AUDIO_VOLUME = 0.1;
@@ -235,9 +235,6 @@ const fetchTransfermarktHtmlWithPuppeteer = async () => {
   try {
     const { browser: connectedBrowser, page: connectedPage } = await connect({
       headless: isHeadless,
-      customConfig: {
-        chromePath: process.env.CHROME_PATH,
-      },
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -359,9 +356,6 @@ const renderImageWithPuppeteer = async (htmlContent) => {
   try {
     const { browser: connectedBrowser, page: connectedPage } = await connect({
       headless: isHeadless,
-      customConfig: {
-        chromePath: process.env.CHROME_PATH,
-      },
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
