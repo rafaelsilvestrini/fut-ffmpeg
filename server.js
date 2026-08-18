@@ -1,6 +1,6 @@
 const express = require('express');
 const axios = require('axios');
-const puppeteer = require('puppeteer');
+const { connect } = require('puppeteer-real-browser');
 const cheerio = require('cheerio');
 const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs');
@@ -25,24 +25,19 @@ const PUPPETEER_ARGS = [
     '--disable-background-networking',
     '--disable-default-apps',
     '--disable-sync',
-    '--mute-audio'
+    '--mute-audio',
+    '--disable-blink-features=AutomationControlled'
 ];
 
-const getPuppeteerLaunchOptions = (userDataDir) => {
-    const options = {
+const getPuppeteerLaunchOptions = async () => {
+    const { browser, page } = await connect({
         headless: 'new',
-        args: PUPPETEER_ARGS
-    };
+        args: PUPPETEER_ARGS,
+        turnstile: true,
+        disableXvfb: true
+    });
 
-    // Usa a variável de ambiente com o caminho exato que você encontrou
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-        options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    }
-
-    // Mantém o diretório de dados em /tmp para evitar problemas de permissão
-    options.userDataDir = userDataDir || '/tmp/puppeteer_cache';
-
-    return options;
+    return { browser, page };
 };
 
 const hostnameFromHeader = (value) => {
