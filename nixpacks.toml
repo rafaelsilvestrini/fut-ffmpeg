@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = [
+    "nspr",
+    "nss",
+    "atk",
+    "cups",
+    "xkbcommon",
+    "gtk3",
+    "alsa-lib",
+    "gbm",
+    "libxshmfence"
+]
