@@ -16,6 +16,34 @@ const TRANSFERMARKT_LATEST_TRANSFERS_URL = 'https://www.transfermarkt.com/transf
 const TRANSFERMARKT_BASE_URL = 'https://www.transfermarkt.com';
 const ALLOWED_DOMAIN = 'fibrazil.es';
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
+const PUPPETEER_ARGS = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-extensions',
+    '--disable-background-networking',
+    '--disable-default-apps',
+    '--disable-sync',
+    '--mute-audio'
+];
+
+const getPuppeteerLaunchOptions = (userDataDir) => {
+    const options = {
+        headless: 'new',
+        args: PUPPETEER_ARGS
+    };
+
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+        options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    if (userDataDir) {
+        options.userDataDir = userDataDir;
+    }
+
+    return options;
+};
 
 const hostnameFromHeader = (value) => {
     if (!value) return '';
@@ -185,12 +213,10 @@ const fetchTransfermarktHtmlWithAxios = async () => {
 
 const fetchTransfermarktHtmlWithPuppeteer = async () => {
     let browser;
+    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transfer-scrape-browser-'));
 
     try {
-        browser = await puppeteer.launch({
-            headless: 'new',
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-        });
+        browser = await puppeteer.launch(getPuppeteerLaunchOptions(profileDir));
 
         const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
@@ -206,6 +232,7 @@ const fetchTransfermarktHtmlWithPuppeteer = async () => {
         if (browser) {
             await browser.close().catch(() => {});
         }
+        fs.rmSync(profileDir, { recursive: true, force: true });
     }
 };
 
@@ -291,12 +318,10 @@ function parseTransfermarktHtml(htmlContent, lang = 'pt') {
 
 const renderImageWithPuppeteer = async (htmlContent) => {
     let browser;
+    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transfer-render-browser-'));
 
     try {
-        browser = await puppeteer.launch({
-            headless: 'new',
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-        });
+        browser = await puppeteer.launch(getPuppeteerLaunchOptions(profileDir));
         const page = await browser.newPage();
         await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 2 });
         await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
@@ -306,6 +331,7 @@ const renderImageWithPuppeteer = async (htmlContent) => {
         if (browser) {
             await browser.close().catch(() => {});
         }
+        fs.rmSync(profileDir, { recursive: true, force: true });
     }
 };
 
