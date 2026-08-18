@@ -207,13 +207,24 @@ const fetchTransfermarktHtmlWithAxios = async () => {
 };
 
 const fetchTransfermarktHtmlWithPuppeteer = async () => {
+    const isLinux = process.platform === 'linux';
+    const isHeadless = isLinux ? true : true; // ou mantendo sua regra de headless
+    let browser, page;
+
     try {
-        const { browser, page } = await connect({
-            headless: 'new',
-            args: PUPPETEER_ARGS,
+        const { browser: connectedBrowser, page: connectedPage } = await connect({
+            headless: isHeadless,
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-blink-features=AutomationControlled'
+            ],
             turnstile: true,
             disableXvfb: true
         });
+
+        browser = connectedBrowser;
+        page = connectedPage;
 
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
         await page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
@@ -223,14 +234,13 @@ const fetchTransfermarktHtmlWithPuppeteer = async () => {
         });
         await page.waitForSelector('table.items > tbody > tr', { timeout: 30000 });
 
-        const content = await page.content();
-        await browser.close().catch(() => {});
-        return content;
-    } catch (error) {
-        throw error;
+        return await page.content();
+    } finally {
+        if (browser) {
+            await browser.close().catch(() => {});
+        }
     }
 };
-
 const scrapeLatestTransfers = async (limit = 25) => {
     let htmlContent = '';
 
@@ -312,22 +322,33 @@ function parseTransfermarktHtml(htmlContent, lang = 'pt') {
 }
 
 const renderImageWithPuppeteer = async (htmlContent) => {
+    const isLinux = process.platform === 'linux';
+    const isHeadless = isLinux ? true : true;
+    let browser, page;
+
     try {
-        const { browser, page } = await connect({
-            headless: 'new',
-            args: PUPPETEER_ARGS,
+        const { browser: connectedBrowser, page: connectedPage } = await connect({
+            headless: isHeadless,
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-blink-features=AutomationControlled'
+            ],
             turnstile: true,
             disableXvfb: true
         });
 
+        browser = connectedBrowser;
+        page = connectedPage;
+
         await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 2 });
         await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
 
-        const screenshot = await page.screenshot({ type: 'png' });
-        await browser.close().catch(() => {});
-        return screenshot;
-    } catch (error) {
-        throw error;
+        return await page.screenshot({ type: 'png' });
+    } finally {
+        if (browser) {
+            await browser.close().catch(() => {});
+        }
     }
 };
 
