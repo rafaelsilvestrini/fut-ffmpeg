@@ -1,5 +1,6 @@
 const express = require("express");
 const axios = require("axios");
+const puppeteer = require("puppeteer");
 const { connect } = require("puppeteer-real-browser");
 const cheerio = require("cheerio");
 const ffmpeg = require("fluent-ffmpeg");
@@ -8,16 +9,95 @@ const path = require("path");
 const os = require("os");
 
 const app = express();
-// Força o caminho do Chrome para o puppeteer-real-browser achar no Easypanel
-process.env.CHROME_PATH = process.env.CHROME_PATH || "/usr/bin/chromium";
-const LOCAL_AUDIO_PATH = path.join(__dirname, "audio", "audio.mp3");
-const VIDEO_DURATION_SECONDS = 30;
-const AUDIO_VOLUME = 0.1;
-const TRANSFERMARKT_LATEST_TRANSFERS_URL =
-  "https://www.transfermarkt.com/transfers/neuestetransfers/statistik/plus/?plus=0&galerie=0&wettbewerb_id=alle&verein_land_id=&selectedOptionInternalType=top15&land_id=&minMarktwert=0&maxMarktwert=500.000.000&minAbloese=0&maxAbloese=500.000.000&yt0=Show";
-const TRANSFERMARKT_BASE_URL = "https://www.transfermarkt.com";
-const ALLOWED_DOMAIN = "fibrazil.es";
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+
+/*
+ * ============================================================
+ * CHROME / PUPPETEER
+ * ============================================================
+ *
+ * No EasyPanel, o Puppeteer instala automaticamente o
+ * Chrome for Testing em:
+ *
+ * /root/.cache/puppeteer/chrome/...
+ *
+ * NÃO usamos /usr/bin/chromium porque esse executável
+ * não existe no teu container.
+ *
+ * O caminho é resolvido pelo próprio Puppeteer.
+ */
+
+let RESOLVED_CHROME_PATH = process.env.CHROME_PATH || "";
+
+const resolveChromePath = async () => {
+  if (RESOLVED_CHROME_PATH && fs.existsSync(RESOLVED_CHROME_PATH)) {
+    return RESOLVED_CHROME_PATH;
+  }
+
+  try {
+    const executablePath = await puppeteer.executablePath();
+
+    if (executablePath && fs.existsSync(executablePath)) {
+      RESOLVED_CHROME_PATH = executablePath;
+      process.env.CHROME_PATH = executablePath;
+
+      console.log(`[Chrome] Chrome encontrado pelo Puppeteer: ${executablePath}`);
+
+      return executablePath;
+    }
+  } catch (error) {
+    console.error(
+      `[Chrome] Erro ao obter executablePath do Puppeteer: ${error.message}`,
+    );
+  }
+
+  /*
+   * Fallback: procurar manualmente no cache do Puppeteer.
+   */
+  const puppeteerCache =
+    process.env.PUPPETEER_CACHE_DIR ||
+    path.join(os.homedir(), ".cache", "puppeteer");
+
+  const possiblePaths = [
+    path.join(
+      puppeteerCache,
+      "chrome",
+      "linux-152.0.7977.42",
+      "chrome-linux64",
+      "chrome",
+    ),
+    path.join(
+      puppeteerCache,
+      "chrome",
+      "linux-152.0.7977.42",
+      "chrome-linux",
+      "chrome",
+    ),
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ];
+
+  for (const possiblePath of possiblePaths) {
+    if (fs.existsSync(possiblePath)) {
+      RESOLVED_CHROME_PATH = possiblePath;
+      process.env.CHROME_PATH = possiblePath;
+
+      console.log(`[Chrome] Chrome encontrado: ${possiblePath}`);
+
+      return possiblePath;
+    }
+  }
+
+  throw new Error(
+    `Chrome não encontrado. Puppeteer executablePath: ${RESOLVED_CHROME_PATH || "indisponível"}`,
+  );
+};
+
+const createChromeUserDataDir = () => {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "chrome-user-data-"));
+};
+
 const PUPPETEER_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
@@ -25,25 +105,155 @@ const PUPPETEER_ARGS = [
   "--disable-gpu",
   "--disable-extensions",
   "--disable-background-networking",
+  "--disable-background-timer-throttling",
+  "--disable-backgrounding-occluded-windows",
+  "--disable-breakpad",
+  "--disable-component-extensions-with-background-pages",
+  "--disable-component-update",
   "--disable-default-apps",
+  "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints,UseDBus",
+  "--disable-hang-monitor",
+  "--disable-ipc-flooding-protection",
+  "--disable-popup-blocking",
+  "--disable-prompt-on-repost",
+  "--disable-renderer-backgrounding",
   "--disable-sync",
+  "--force-color-profile=srgb",
+  "--metrics-recording-only",
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--password-store=basic",
+  "--use-mock-keychain",
   "--mute-audio",
   "--disable-blink-features=AutomationControlled",
 ];
 
+/*
+ * Inicializa o Chrome através do puppeteer-real-browser.
+ *
+ * IMPORTANTE:
+ * CHROME_PATH é definido ANTES do connect().
+ */
 const getPuppeteerLaunchOptions = async () => {
-  const { browser, page } = await connect({
-    headless: "new",
-    args: PUPPETEER_ARGS,
-    turnstile: true,
-    disableXvfb: true,
+  const chromePath = await resolveChromePath();
+  const userDataDir = createChromeUserDataDir();
+
+  console.log(`[Chrome] Iniciando Chrome: ${chromePath}`);
+  console.log(`[Chrome] User data dir: ${userDataDir}`);
+
+  try {
+    const { browser, page } = await connect({
+      headless: true,
+
+      customConfig: {
+        chromePath,
+        userDataDir,
+      },
+
+      args: PUPPETEER_ARGS,
+
+      turnstile: true,
+
+      /*
+       * Como estamos em headless true, não precisamos
+       * do Xvfb.
+       */
+      disableXvfb: true,
+
+      connectOption: {
+        timeout: 60000,
+        defaultViewport: null,
+      },
+    });
+
+    console.log("[Chrome] Browser conectado com sucesso.");
+
+    return {
+      browser,
+      page,
+      userDataDir,
+    };
+  } catch (error) {
+    /*
+     * Se o Chrome morrer durante o arranque, limpar
+     * o perfil temporário.
+     */
+    fs.rmSync(userDataDir, {
+      recursive: true,
+      force: true,
+    });
+
+    throw error;
+  }
+};
+
+const cleanupChromeUserDataDir = (userDataDir) => {
+  if (!userDataDir) return;
+
+  try {
+    fs.rmSync(userDataDir, {
+      recursive: true,
+      force: true,
+    });
+  } catch (error) {
+    console.warn(
+      `[Chrome] Não foi possível limpar userDataDir: ${error.message}`,
+    );
+  }
+};
+
+/*
+ * Resolve o Chrome assim que o servidor arranca.
+ *
+ * O erro aqui não impede o Express de arrancar.
+ * Se o Chrome falhar, veremos o erro no endpoint.
+ */
+resolveChromePath()
+  .then((chromePath) => {
+    console.log(`[Chrome] Pronto: ${chromePath}`);
+  })
+  .catch((error) => {
+    console.error(`[Chrome] AVISO: ${error.message}`);
   });
 
-  return { browser, page };
-};
+
+/*
+ * ============================================================
+ * CONFIGURAÇÃO
+ * ============================================================
+ */
+
+const LOCAL_AUDIO_PATH = path.join(__dirname, "audio", "audio.mp3");
+
+const VIDEO_DURATION_SECONDS = 30;
+
+const AUDIO_VOLUME = 0.1;
+
+const TRANSFERMARKT_LATEST_TRANSFERS_URL =
+  "https://www.transfermarkt.com/transfers/neuestetransfers/statistik/plus/?plus=0&galerie=0&wettbewerb_id=alle&verein_land_id=&selectedOptionInternalType=top15&land_id=&minMarktwert=0&maxMarktwert=500.000.000&minAbloese=0&maxAbloese=500.000.000&yt0=Show";
+
+const TRANSFERMARKT_BASE_URL =
+  "https://www.transfermarkt.com";
+
+const ALLOWED_DOMAIN = "fibrazil.es";
+
+const LOCAL_HOSTS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "0.0.0.0",
+]);
+
+
+/*
+ * ============================================================
+ * HOST / CORS
+ * ============================================================
+ */
 
 const hostnameFromHeader = (value) => {
   if (!value) return "";
+
   try {
     return new URL(
       value.includes("://") ? value : `http://${value}`,
@@ -55,7 +265,11 @@ const hostnameFromHeader = (value) => {
 
 const isAllowedHostname = (hostname) => {
   if (!hostname) return false;
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+
+  const normalized = hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+
   return (
     LOCAL_HOSTS.has(normalized) ||
     normalized === ALLOWED_DOMAIN ||
@@ -67,24 +281,40 @@ app.use((req, res, next) => {
   const origin = req.headers.origin;
   const referer = req.headers.referer;
   const requestHost = req.headers.host;
+
   const originHost = hostnameFromHeader(origin);
   const refererHost = hostnameFromHeader(referer);
   const host = hostnameFromHeader(requestHost);
+
   const allowed = origin
     ? isAllowedHostname(originHost)
-    : isAllowedHostname(refererHost) || isAllowedHostname(host);
+    : isAllowedHostname(refererHost) ||
+      isAllowedHostname(host);
 
   if (!allowed) {
-    return res.status(403).json({ error: "Origem nao autorizada" });
+    return res.status(403).json({
+      error: "Origem nao autorizada",
+    });
   }
 
   if (origin && isAllowedHostname(originHost)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader(
+      "Access-Control-Allow-Origin",
+      origin,
+    );
+
     res.setHeader("Vary", "Origin");
   }
 
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization");
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET,POST,OPTIONS",
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type,Authorization",
+  );
 
   if (req.method === "OPTIONS") {
     return res.sendStatus(204);
@@ -93,28 +323,61 @@ app.use((req, res, next) => {
   return next();
 });
 
-app.use(express.json({ limit: "10mb" }));
+app.use(
+  express.json({
+    limit: "10mb",
+  }),
+);
+
+
+/*
+ * ============================================================
+ * HELPERS
+ * ============================================================
+ */
 
 const toHighRes = (url) => {
   if (!url) return "";
-  return url.replace(/\/tiny\//g, "/head/");
+
+  return url.replace(
+    /\/tiny\//g,
+    "/head/",
+  );
 };
 
 const urlToBase64 = async (url) => {
   if (!url) return "";
+
   try {
-    const response = await axios.get(url, { responseType: "arraybuffer" });
-    const mimeType = response.headers["content-type"] || "image/png";
-    return `data:${mimeType};base64,${Buffer.from(response.data).toString("base64")}`;
+    const response = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 30000,
+      maxContentLength: 20 * 1024 * 1024,
+      maxBodyLength: 20 * 1024 * 1024,
+    });
+
+    const mimeType =
+      response.headers["content-type"] ||
+      "image/png";
+
+    return `data:${mimeType};base64,${Buffer.from(
+      response.data,
+    ).toString("base64")}`;
   } catch (err) {
+    console.error(
+      `[Image] Erro ao baixar ${url}: ${err.message}`,
+    );
+
     return "";
   }
 };
 
 const getBrasiliaDate = () => {
   const now = new Date();
+
   return {
     iso: now.toISOString(),
+
     brasilia: now.toLocaleString("pt-BR", {
       timeZone: "America/Sao_Paulo",
       year: "numeric",
@@ -128,326 +391,701 @@ const getBrasiliaDate = () => {
   };
 };
 
-const parseLatestTransfersHtml = (htmlContent, limit = 25) => {
+
+/*
+ * ============================================================
+ * TRANSFERMARKT PARSING
+ * ============================================================
+ */
+
+const parseLatestTransfersHtml = (
+  htmlContent,
+  limit = 25,
+) => {
   const $ = cheerio.load(htmlContent);
+
   const absoluteUrl = (url) => {
     if (!url) return "";
-    return new URL(url, TRANSFERMARKT_BASE_URL).href;
+
+    try {
+      return new URL(
+        url,
+        TRANSFERMARKT_BASE_URL,
+      ).href;
+    } catch (error) {
+      return "";
+    }
   };
-  const cleanText = (value) => (value || "").replace(/\s+/g, " ").trim();
+
+  const cleanText = (value) =>
+    (value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+
   const imageUrl = (img) => {
-    const src = img.attr("data-src") || img.attr("src") || "";
-    return absoluteUrl(src).replace(/\/tiny\//g, "/head/");
+    const src =
+      img.attr("data-src") ||
+      img.attr("src") ||
+      "";
+
+    return absoluteUrl(src).replace(
+      /\/tiny\//g,
+      "/head/",
+    );
   };
+
   const parsePlayer = (cell) => {
     const playerLink = cell
-      .find('td.hauptlink a[href*="/profil/spieler/"]')
+      .find(
+        'td.hauptlink a[href*="/profil/spieler/"]',
+      )
       .first();
-    const playerUrl = absoluteUrl(playerLink.attr("href"));
+
+    const playerUrl = absoluteUrl(
+      playerLink.attr("href"),
+    );
 
     return {
       name: cleanText(playerLink.text()),
       id: playerUrl,
       url: playerUrl,
+
       position: cleanText(
-        cell.find("table.inline-table tr").eq(1).find("td").last().text(),
+        cell
+          .find("table.inline-table tr")
+          .eq(1)
+          .find("td")
+          .last()
+          .text(),
       ),
-      image_url: imageUrl(cell.find("img").first()),
+
+      image_url: imageUrl(
+        cell.find("img").first(),
+      ),
     };
   };
+
   const parseClub = (cell) => {
     const clubLink = cell
-      .find('td.hauptlink a[href*="/startseite/verein/"]')
+      .find(
+        'td.hauptlink a[href*="/startseite/verein/"]',
+      )
       .first();
+
     const fallbackClubLink = cell
-      .find('a[href*="/startseite/verein/"]')
+      .find(
+        'a[href*="/startseite/verein/"]',
+      )
       .first();
-    const selectedClubLink = clubLink.length ? clubLink : fallbackClubLink;
-    const leagueLink = cell.find('a[href*="/transfers/wettbewerb/"]').first();
-    const clubImg = cell.find("img.tiny_wappen").first();
+
+    const selectedClubLink =
+      clubLink.length
+        ? clubLink
+        : fallbackClubLink;
+
+    const leagueLink = cell
+      .find(
+        'a[href*="/transfers/wettbewerb/"]',
+      )
+      .first();
+
+    const clubImg = cell
+      .find("img.tiny_wappen")
+      .first();
 
     return {
       name:
-        cleanText(selectedClubLink.text()) || cleanText(clubImg.attr("alt")),
+        cleanText(selectedClubLink.text()) ||
+        cleanText(clubImg.attr("alt")),
+
       full_name:
-        cleanText(selectedClubLink.attr("title")) ||
-        cleanText(clubImg.attr("title")),
-      url: absoluteUrl(selectedClubLink.attr("href")),
+        cleanText(
+          selectedClubLink.attr("title"),
+        ) ||
+        cleanText(
+          clubImg.attr("title"),
+        ),
+
+      url: absoluteUrl(
+        selectedClubLink.attr("href"),
+      ),
+
       image_url: imageUrl(clubImg),
-      league: cleanText(leagueLink.text()),
-      league_url: absoluteUrl(leagueLink.attr("href")),
+
+      league: cleanText(
+        leagueLink.text(),
+      ),
+
+      league_url: absoluteUrl(
+        leagueLink.attr("href"),
+      ),
     };
   };
+
   const parseFee = (cell) => {
     const feeLink = cell.find("a").first();
-    const value = cleanText(feeLink.text() || cell.text());
+
+    const value = cleanText(
+      feeLink.text() || cell.text(),
+    );
 
     return {
       value,
       type: value,
-      url: absoluteUrl(feeLink.attr("href")),
+      url: absoluteUrl(
+        feeLink.attr("href"),
+      ),
     };
   };
 
   return $("table.items > tbody > tr")
-    .filter((_, row) => $(row).children("td").length >= 6)
+    .filter(
+      (_, row) =>
+        $(row).children("td").length >= 6,
+    )
     .slice(0, limit)
     .map((_, row) => {
       const cells = $(row).children("td");
+
       const nationalities = cells
         .eq(2)
         .find("img")
-        .map((__, img) => cleanText($(img).attr("title") || $(img).attr("alt")))
+        .map(
+          (__, img) =>
+            cleanText(
+              $(img).attr("title") ||
+                $(img).attr("alt"),
+            ),
+        )
         .get()
         .filter(Boolean);
 
       return {
-        player: parsePlayer(cells.eq(0)),
-        age: cleanText(cells.eq(1).text()),
+        player: parsePlayer(
+          cells.eq(0),
+        ),
+
+        age: cleanText(
+          cells.eq(1).text(),
+        ),
+
         nationalities,
-        left: parseClub(cells.eq(3)),
-        joined: parseClub(cells.eq(4)),
-        fee: parseFee(cells.eq(5)),
+
+        left: parseClub(
+          cells.eq(3),
+        ),
+
+        joined: parseClub(
+          cells.eq(4),
+        ),
+
+        fee: parseFee(
+          cells.eq(5),
+        ),
       };
     })
     .get();
 };
 
-const fetchTransfermarktHtmlWithAxios = async () => {
-  const response = await axios.get(TRANSFERMARKT_LATEST_TRANSFERS_URL, {
-    timeout: 30000,
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-      "Accept-Language": "en-US,en;q=0.9",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-  });
 
-  return response.data;
-};
+/*
+ * ============================================================
+ * TRANSFERMARKT - AXIOS
+ * ============================================================
+ */
 
-const fetchTransfermarktHtmlWithPuppeteer = async () => {
-  const isLinux = process.platform === "linux";
-  const isHeadless = isLinux ? true : true; // ou mantendo sua regra de headless
-  let browser, page;
+const fetchTransfermarktHtmlWithAxios =
+  async () => {
+    const response = await axios.get(
+      TRANSFERMARKT_LATEST_TRANSFERS_URL,
+      {
+        timeout: 30000,
 
-  try {
-    const { browser: connectedBrowser, page: connectedPage } = await connect({
-      headless: isHeadless,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-blink-features=AutomationControlled",
-      ],
-      turnstile: true,
-      disableXvfb: true,
-    });
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 
-    browser = connectedBrowser;
-    page = connectedPage;
+          "Accept-Language":
+            "en-US,en;q=0.9",
 
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+      },
     );
-    await page.setExtraHTTPHeaders({ "accept-language": "en-US,en;q=0.9" });
-    await page.goto(TRANSFERMARKT_LATEST_TRANSFERS_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 45000,
-    });
-    await page.waitForSelector("table.items > tbody > tr", { timeout: 30000 });
 
-    return await page.content();
-  } finally {
-    if (browser) {
-      await browser.close().catch(() => {});
+    return response.data;
+  };
+
+
+/*
+ * ============================================================
+ * TRANSFERMARKT - PUPPETEER
+ * ============================================================
+ */
+
+const fetchTransfermarktHtmlWithPuppeteer =
+  async () => {
+    let browser = null;
+    let page = null;
+    let userDataDir = null;
+
+    try {
+      const result =
+        await getPuppeteerLaunchOptions();
+
+      browser = result.browser;
+      page = result.page;
+      userDataDir = result.userDataDir;
+
+      await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      );
+
+      await page.setExtraHTTPHeaders({
+        "accept-language":
+          "en-US,en;q=0.9",
+      });
+
+      await page.goto(
+        TRANSFERMARKT_LATEST_TRANSFERS_URL,
+        {
+          waitUntil:
+            "domcontentloaded",
+
+          timeout: 45000,
+        },
+      );
+
+      await page.waitForSelector(
+        "table.items > tbody > tr",
+        {
+          timeout: 30000,
+        },
+      );
+
+      return await page.content();
+    } finally {
+      if (browser) {
+        await browser
+          .close()
+          .catch(() => {});
+      }
+
+      cleanupChromeUserDataDir(
+        userDataDir,
+      );
     }
-  }
-};
-const scrapeLatestTransfers = async (limit = 25) => {
+  };
+
+
+const scrapeLatestTransfers = async (
+  limit = 25,
+) => {
   let htmlContent = "";
 
+  /*
+   * Primeiro tenta Axios.
+   */
   try {
-    htmlContent = await fetchTransfermarktHtmlWithAxios();
-    const transfers = parseLatestTransfersHtml(htmlContent, limit);
-    if (transfers.length > 0) return transfers;
+    htmlContent =
+      await fetchTransfermarktHtmlWithAxios();
+
+    const transfers =
+      parseLatestTransfersHtml(
+        htmlContent,
+        limit,
+      );
+
+    if (transfers.length > 0) {
+      return transfers;
+    }
   } catch (error) {
-    htmlContent = "";
+    console.warn(
+      `[Transfermarkt] Axios falhou: ${error.message}`,
+    );
   }
 
-  htmlContent = await fetchTransfermarktHtmlWithPuppeteer();
-  return parseLatestTransfersHtml(htmlContent, limit);
+  /*
+   * Se Axios falhar, usa Chrome.
+   */
+  htmlContent =
+    await fetchTransfermarktHtmlWithPuppeteer();
+
+  return parseLatestTransfersHtml(
+    htmlContent,
+    limit,
+  );
 };
 
-const formatMarketValue = (val, lang = "pt") => {
+
+/*
+ * ============================================================
+ * MARKET VALUE
+ * ============================================================
+ */
+
+const formatMarketValue = (
+  val,
+  lang = "pt",
+) => {
   if (!val) return "";
 
   let num = null;
-  let str = val.toString().trim().toLowerCase();
 
-  if (str.includes("mil") || str.includes("k")) {
-    let match = str.match(/[\d.,]+/);
+  const str = val
+    .toString()
+    .trim()
+    .toLowerCase();
+
+  if (
+    str.includes("mil") ||
+    str.includes("k")
+  ) {
+    const match =
+      str.match(/[\d.,]+/);
+
     if (match) {
-      num = parseFloat(match[0].replace(",", ".")) * 1000;
+      num =
+        parseFloat(
+          match[0].replace(
+            ",",
+            ".",
+          ),
+        ) * 1000;
     }
-  } else if (str.includes("mi") || str.includes("m")) {
-    let match = str.match(/[\d.,]+/);
+  } else if (
+    str.includes("mi") ||
+    str.includes("m")
+  ) {
+    const match =
+      str.match(/[\d.,]+/);
+
     if (match) {
-      num = parseFloat(match[0].replace(",", ".")) * 1000000;
+      num =
+        parseFloat(
+          match[0].replace(
+            ",",
+            ".",
+          ),
+        ) * 1000000;
     }
   } else {
-    let match = str.match(/[\d.,]+/);
+    const match =
+      str.match(/[\d.,]+/);
+
     if (match) {
-      num = parseFloat(match[0].replace(",", "."));
+      num = parseFloat(
+        match[0].replace(
+          ",",
+          ".",
+        ),
+      );
     }
   }
 
-  if (num === null || isNaN(num)) return val;
+  if (
+    num === null ||
+    isNaN(num)
+  ) {
+    return val;
+  }
 
-  let symbol = "€";
+  const symbol = "€";
+
   let formattedNum = "";
   let suffix = "";
 
   if (num >= 1000000) {
-    let valM = num / 1000000;
-    formattedNum = Number.isInteger(valM)
-      ? valM.toString()
-      : valM.toFixed(1).replace(".", ",");
+    const valM = num / 1000000;
+
+    formattedNum =
+      Number.isInteger(valM)
+        ? valM.toString()
+        : valM
+            .toFixed(1)
+            .replace(".", ",");
+
     suffix = "m";
   } else if (num >= 1000) {
-    let valK = num / 1000;
-    formattedNum = Number.isInteger(valK)
-      ? valK.toString()
-      : valK.toFixed(1).replace(".", ",");
+    const valK = num / 1000;
+
+    formattedNum =
+      Number.isInteger(valK)
+        ? valK.toString()
+        : valK
+            .toFixed(1)
+            .replace(".", ",");
+
     suffix = "k";
   } else {
-    formattedNum = num.toString();
+    formattedNum =
+      num.toString();
   }
 
-  const langLower = lang.toLowerCase();
+  const langLower =
+    lang.toLowerCase();
+
   if (langLower === "en") {
-    formattedNum = formattedNum.replace(",", ".");
+    formattedNum =
+      formattedNum.replace(
+        ",",
+        ".",
+      );
+
     return `${symbol}${formattedNum}${suffix}`;
-  } else if (langLower === "es" || langLower === "pt") {
+  }
+
+  if (
+    langLower === "es" ||
+    langLower === "pt"
+  ) {
     return `${formattedNum}${suffix} ${symbol}`;
   }
 
   return `${formattedNum}${suffix} ${symbol}`;
 };
 
-function parseTransfermarktHtml(htmlContent, lang = "pt") {
+
+function parseTransfermarktHtml(
+  htmlContent,
+  lang = "pt",
+) {
   if (!htmlContent) return [];
-  const $ = cheerio.load(htmlContent);
+
+  const $ =
+    cheerio.load(
+      htmlContent,
+    );
+
   const points = [];
-  $("g.chart-dots image").each((i, el) => {
-    const href = $(el).attr("xlink:href") || $(el).attr("href");
-    if (href) {
-      points.push({ club_logo_url: href });
-    }
-  });
+
+  $("g.chart-dots image").each(
+    (i, el) => {
+      const href =
+        $(el).attr(
+          "xlink:href",
+        ) ||
+        $(el).attr(
+          "href",
+        );
+
+      if (href) {
+        points.push({
+          club_logo_url:
+            href,
+        });
+      }
+    },
+  );
+
   return points;
 }
 
-const renderImageWithPuppeteer = async (htmlContent) => {
-  const isLinux = process.platform === "linux";
-  const isHeadless = isLinux ? true : true;
-  let browser, page;
 
-  try {
-    const { browser: connectedBrowser, page: connectedPage } = await connect({
-      headless: isHeadless,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-blink-features=AutomationControlled",
-      ],
-      turnstile: true,
-      disableXvfb: true,
-    });
+/*
+ * ============================================================
+ * RENDER IMAGE WITH CHROME
+ * ============================================================
+ */
 
-    browser = connectedBrowser;
-    page = connectedPage;
+const renderImageWithPuppeteer =
+  async (htmlContent) => {
+    let browser = null;
+    let page = null;
+    let userDataDir = null;
 
-    await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 2 });
-    await page.setContent(htmlContent, { waitUntil: "networkidle0" });
+    try {
+      const result =
+        await getPuppeteerLaunchOptions();
 
-    return await page.screenshot({ type: "png" });
-  } finally {
-    if (browser) {
-      await browser.close().catch(() => {});
+      browser = result.browser;
+      page = result.page;
+      userDataDir = result.userDataDir;
+
+      await page.setViewport({
+        width: 1080,
+        height: 1920,
+        deviceScaleFactor: 2,
+      });
+
+      await page.setContent(
+        htmlContent,
+        {
+          waitUntil:
+            "networkidle0",
+          timeout: 60000,
+        },
+      );
+
+      return await page.screenshot({
+        type: "png",
+        fullPage: false,
+      });
+    } finally {
+      if (browser) {
+        await browser
+          .close()
+          .catch(() => {});
+      }
+
+      cleanupChromeUserDataDir(
+        userDataDir,
+      );
     }
-  }
-};
+  };
 
-const convertImageToMp4 = (imageBuffer) =>
-  new Promise((resolve, reject) => {
-    const requestTmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "transfer-video-"),
-    );
-    const imgPath = path.join(requestTmpDir, "card.png");
-    const videoOutputPath = path.join(requestTmpDir, "video.mp4");
-    const cleanup = () => {
-      fs.rmSync(requestTmpDir, { recursive: true, force: true });
-    };
 
-    fs.writeFileSync(imgPath, imageBuffer);
+/*
+ * ============================================================
+ * IMAGE -> MP4
+ * ============================================================
+ */
 
-    const duration = VIDEO_DURATION_SECONDS;
+const convertImageToMp4 = (
+  imageBuffer,
+) =>
+  new Promise(
+    (resolve, reject) => {
+      const requestTmpDir =
+        fs.mkdtempSync(
+          path.join(
+            os.tmpdir(),
+            "transfer-video-",
+          ),
+        );
 
-    const hasLocalAudio = fs.existsSync(LOCAL_AUDIO_PATH);
+      const imgPath =
+        path.join(
+          requestTmpDir,
+          "card.png",
+        );
 
-    const command = ffmpeg()
-      .input(imgPath)
-      .inputOptions(["-loop 1", "-t", `${duration}`]);
+      const videoOutputPath =
+        path.join(
+          requestTmpDir,
+          "video.mp4",
+        );
 
-    if (hasLocalAudio) {
-      command.input(LOCAL_AUDIO_PATH).inputOptions([
-        "-stream_loop -1", // Repete o áudio caso ele seja menor que a duração total
-      ]);
-    }
+      const cleanup = () => {
+        fs.rmSync(
+          requestTmpDir,
+          {
+            recursive: true,
+            force: true,
+          },
+        );
+      };
 
-    command
-      .fps(30)
-      .videoCodec("libx264")
-      .outputOptions([
-        "-preset ultrafast",
-        "-crf 26",
-        "-pix_fmt yuv420p",
-        "-vf scale=1080:1920:flags=lanczos",
-        "-t",
-        `${duration}`, // Corta exatamente na duração especificada
-      ]);
-
-    if (hasLocalAudio) {
-      command
-        .audioCodec("aac")
-        .audioBitrate("128k")
-        .audioFilters(`volume=${AUDIO_VOLUME}`);
-    }
-
-    command
-      .output(videoOutputPath)
-      .on("end", () => {
-        try {
-          const videoBuffer = fs.readFileSync(videoOutputPath);
-          resolve({
-            mime_type: "video/mp4",
-            filename: "reels.mp4",
-            duration_seconds: duration,
-            blob: `data:video/mp4;base64,${videoBuffer.toString("base64")}`,
-          });
-        } catch (error) {
-          reject(error);
-        } finally {
-          cleanup();
-        }
-      })
-      .on("error", (err) => {
+      try {
+        fs.writeFileSync(
+          imgPath,
+          imageBuffer,
+        );
+      } catch (error) {
         cleanup();
-        reject(err);
-      })
-      .run();
-  });
+        reject(error);
+        return;
+      }
+
+      const duration =
+        VIDEO_DURATION_SECONDS;
+
+      const hasLocalAudio =
+        fs.existsSync(
+          LOCAL_AUDIO_PATH,
+        );
+
+      const command =
+        ffmpeg()
+          .input(imgPath)
+          .inputOptions([
+            "-loop 1",
+            "-t",
+            `${duration}`,
+          ]);
+
+      if (hasLocalAudio) {
+        command
+          .input(
+            LOCAL_AUDIO_PATH,
+          )
+          .inputOptions([
+            "-stream_loop -1",
+          ]);
+      }
+
+      command
+        .fps(30)
+        .videoCodec("libx264")
+        .outputOptions([
+          "-preset ultrafast",
+          "-crf 26",
+          "-pix_fmt yuv420p",
+          "-vf",
+          "scale=1080:1920:flags=lanczos",
+          "-t",
+          `${duration}`,
+        ]);
+
+      if (hasLocalAudio) {
+        command
+          .audioCodec("aac")
+          .audioBitrate("128k")
+          .audioFilters(
+            `volume=${AUDIO_VOLUME}`,
+          );
+      }
+
+      command
+        .output(
+          videoOutputPath,
+        )
+        .on("start", (commandLine) => {
+          console.log(
+            `[FFmpeg] ${commandLine}`,
+          );
+        })
+        .on("end", () => {
+          try {
+            const videoBuffer =
+              fs.readFileSync(
+                videoOutputPath,
+              );
+
+            resolve({
+              mime_type:
+                "video/mp4",
+
+              filename:
+                "reels.mp4",
+
+              duration_seconds:
+                duration,
+
+              blob:
+                `data:video/mp4;base64,${videoBuffer.toString("base64")}`,
+            });
+          } catch (error) {
+            reject(error);
+          } finally {
+            cleanup();
+          }
+        })
+        .on("error", (err) => {
+          cleanup();
+          reject(err);
+        })
+        .run();
+    },
+  );
+
+
+/*
+ * ============================================================
+ * TRANSFER HTML
+ * ============================================================
+ */
 
 const generateTransferHtml = ({
   player_name,
@@ -467,9 +1105,19 @@ const generateTransferHtml = ({
 <html>
 <head>
     <meta charset="utf-8">
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&display=swap" rel="stylesheet">
+
+    <link
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&display=swap"
+      rel="stylesheet"
+    >
+
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         body {
             width: 1080px;
             height: 1920px;
@@ -478,6 +1126,7 @@ const generateTransferHtml = ({
             position: relative;
             overflow: hidden;
         }
+
         ${
           bgB64
             ? `
@@ -494,6 +1143,7 @@ const generateTransferHtml = ({
         `
             : ""
         }
+
         .dark-overlay {
             position: absolute;
             top: 0;
@@ -503,26 +1153,34 @@ const generateTransferHtml = ({
             background: rgba(0, 0, 0, 0.45);
             z-index: 2;
         }
+
         .shadow-overlay {
             position: absolute;
             bottom: 0;
             left: 0;
             width: 100%;
             height: 850px;
-            background: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.85) 50%, rgba(0,0,0,0) 100%);
+            background: linear-gradient(
+                to top,
+                rgba(0,0,0,1) 0%,
+                rgba(0,0,0,0.85) 50%,
+                rgba(0,0,0,0) 100%
+            );
             z-index: 3;
         }
+
         .watermark-insta {
             position: absolute;
             top: 60px;
             left: 60px;
-            color: rgba(255, 255, 255, 0.45);
+            color: rgba(255,255,255,0.45);
             font-size: 24px;
             font-weight: 800;
             letter-spacing: 1.5px;
             text-shadow: 0 2px 8px rgba(0,0,0,0.8);
             z-index: 4;
         }
+
         ${
           logoB64
             ? `
@@ -536,6 +1194,7 @@ const generateTransferHtml = ({
             align-items: center;
             z-index: 4;
         }
+
         .logo-bg-wrapper {
             background-color: #FFFFFF;
             border-radius: 6px;
@@ -545,6 +1204,7 @@ const generateTransferHtml = ({
             align-items: center;
             box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
+
         .brand-logo {
             max-width: 320px;
             max-height: 115px;
@@ -554,6 +1214,7 @@ const generateTransferHtml = ({
         `
             : ""
         }
+
         .info-wrapper {
             position: absolute;
             bottom: 340px;
@@ -565,20 +1226,23 @@ const generateTransferHtml = ({
             gap: 20px;
             z-index: 4;
         }
+
         .season-tag {
-            background: rgba(0, 0, 0, 0.7);
-            border: 1px solid rgba(63, 158, 64, 0.5);
+            background: rgba(0,0,0,0.7);
+            border: 1px solid rgba(63,158,64,0.5);
             color: #3F9E40;
             padding: 10px 30px;
             border-radius: 24px;
             text-align: center;
         }
+
         .season-main {
             font-size: 28px;
             font-weight: 800;
             letter-spacing: 2px;
             text-transform: uppercase;
         }
+
         .season-sub {
             font-size: 14px;
             font-weight: 700;
@@ -586,14 +1250,16 @@ const generateTransferHtml = ({
             letter-spacing: 1px;
             margin-top: 2px;
         }
+
         .financial-info {
             display: flex;
             justify-content: center;
             gap: 30px;
         }
+
         .info-card {
-            background: rgba(18, 18, 18, 0.85);
-            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: rgba(18,18,18,0.85);
+            border: 1px solid rgba(255,255,255,0.15);
             backdrop-filter: blur(15px);
             padding: 20px 34px;
             border-radius: 16px;
@@ -601,10 +1267,12 @@ const generateTransferHtml = ({
             min-width: 310px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
+
         .info-card.highlight {
             border-color: #3F9E40;
-            background: rgba(63, 158, 64, 0.1);
+            background: rgba(63,158,64,0.1);
         }
+
         .info-label {
             color: #FFFFFF;
             font-size: 18px;
@@ -612,6 +1280,7 @@ const generateTransferHtml = ({
             text-transform: uppercase;
             letter-spacing: 1.2px;
         }
+
         .info-sublabel {
             color: #A0A0A0;
             font-size: 12px;
@@ -621,14 +1290,17 @@ const generateTransferHtml = ({
             margin-top: 2px;
             margin-bottom: 6px;
         }
+
         .info-value {
             color: #FFFFFF;
             font-size: 48px;
             font-weight: 900;
         }
+
         .info-card.highlight .info-value {
             color: #3F9E40;
         }
+
         .transfer-row {
             position: absolute;
             bottom: 160px;
@@ -640,6 +1312,7 @@ const generateTransferHtml = ({
             gap: 40px;
             z-index: 4;
         }
+
         .badge {
             width: 170px;
             height: 170px;
@@ -647,12 +1320,14 @@ const generateTransferHtml = ({
             image-rendering: -webkit-optimize-contrast;
             filter: drop-shadow(0 10px 20px rgba(0,0,0,0.8));
         }
+
         .handshake-icon {
             width: 92px;
             height: 92px;
             object-fit: contain;
-            filter: drop-shadow(0 0 20px rgba(63, 158, 64, 0.8));
+            filter: drop-shadow(0 0 20px rgba(63,158,64,0.8));
         }
+
         .name-banner {
             position: absolute;
             bottom: 0;
@@ -664,6 +1339,7 @@ const generateTransferHtml = ({
             text-align: center;
             z-index: 4;
         }
+
         .player-name {
             color: #FFFFFF;
             font-size: 58px;
@@ -675,77 +1351,153 @@ const generateTransferHtml = ({
         }
     </style>
 </head>
+
 <body>
-    ${bgB64 ? `<img class="background-img" src="${bgB64}" />` : ""}
+
+    ${
+      bgB64
+        ? `<img class="background-img" src="${bgB64}" />`
+        : ""
+    }
+
     <div class="dark-overlay"></div>
+
     <div class="shadow-overlay"></div>
-    <div class="watermark-insta">${instagram_handle}</div>
+
+    <div class="watermark-insta">
+        ${instagram_handle || ""}
+    </div>
+
     ${
       logoB64
         ? `
     <div class="brand-logo-container">
         <div class="logo-bg-wrapper">
-            <img class="brand-logo" src="${logoB64}" />
+            <img
+                class="brand-logo"
+                src="${logoB64}"
+            />
         </div>
     </div>
     `
         : ""
     }
+
     <div class="info-wrapper">
+
         ${
           season
             ? `
         <div class="season-tag">
-            <div class="season-main">SEASON ${season}</div>
-            <div class="season-sub">TEMPORADA</div>
+            <div class="season-main">
+                SEASON ${season}
+            </div>
+
+            <div class="season-sub">
+                TEMPORADA
+            </div>
         </div>
         `
             : ""
         }
+
         ${
           market_value_then || fee
             ? `
         <div class="financial-info">
+
             ${
               market_value_then
                 ? `
             <div class="info-card">
-                <div class="info-label">MARKET VALUE</div>
-                <div class="info-sublabel">VALOR DE MERCADO</div>
-                <div class="info-value">${market_value_then}</div>
+
+                <div class="info-label">
+                    MARKET VALUE
+                </div>
+
+                <div class="info-sublabel">
+                    VALOR DE MERCADO
+                </div>
+
+                <div class="info-value">
+                    ${market_value_then}
+                </div>
+
             </div>
             `
                 : ""
             }
+
             ${
               fee
                 ? `
             <div class="info-card highlight">
-                <div class="info-label">TRANSFER FEE</div>
-                <div class="info-sublabel">VALOR DA COMPRA / FICHAJE</div>
-                <div class="info-value">${fee}</div>
+
+                <div class="info-label">
+                    TRANSFER FEE
+                </div>
+
+                <div class="info-sublabel">
+                    VALOR DA COMPRA / FICHAJE
+                </div>
+
+                <div class="info-value">
+                    ${fee}
+                </div>
+
             </div>
             `
                 : ""
             }
+
         </div>
         `
             : ""
         }
+
     </div>
+
     <div class="transfer-row">
-        ${fromB64 ? `<img class="badge" src="${fromB64}" />` : ""}
-        ${handshakeB64 ? `<img class="handshake-icon" src="${handshakeB64}" />` : ""}
-        ${toB64 ? `<img class="badge" src="${toB64}" />` : ""}
+
+        ${
+          fromB64
+            ? `<img class="badge" src="${fromB64}" />`
+            : ""
+        }
+
+        ${
+          handshakeB64
+            ? `<img class="handshake-icon" src="${handshakeB64}" />`
+            : ""
+        }
+
+        ${
+          toB64
+            ? `<img class="badge" src="${toB64}" />`
+            : ""
+        }
+
     </div>
+
     <div class="name-banner">
+
         <div class="player-name">
-            ${player_name || ""} ${player_age ? `(${player_age})` : ""}
+            ${player_name || ""}
+            ${player_age ? `(${player_age})` : ""}
         </div>
+
     </div>
+
 </body>
 </html>
 `;
+
+
+/*
+ * ============================================================
+ * MARKET VALUE HTML
+ * ============================================================
+ */
 
 const generateMarketValueHtml = ({
   player_name,
@@ -756,12 +1508,26 @@ const generateMarketValueHtml = ({
   lang = "pt",
 }) => `
 <!DOCTYPE html>
+
 <html>
+
 <head>
+
     <meta charset="utf-8">
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&display=swap" rel="stylesheet">
+
+    <link
+        href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&display=swap"
+        rel="stylesheet"
+    >
+
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         body {
             width: 1080px;
             height: 1920px;
@@ -770,6 +1536,7 @@ const generateMarketValueHtml = ({
             position: relative;
             overflow: hidden;
         }
+
         ${
           bgB64
             ? `
@@ -786,39 +1553,47 @@ const generateMarketValueHtml = ({
         `
             : ""
         }
+
         .dark-overlay {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.45);
+            background: rgba(0,0,0,0.45);
             z-index: 2;
         }
+
         .shadow-overlay {
             position: absolute;
             bottom: 0;
             left: 0;
             width: 100%;
             height: 1200px;
-            background: linear-gradient(to top, 
-                rgba(0,0,0,1) 0%, 
-                rgba(0,0,0,0.95) 40%, 
-                rgba(0,0,0,0.7) 70%, 
-                rgba(0,0,0,0) 100%);
+
+            background: linear-gradient(
+                to top,
+                rgba(0,0,0,1) 0%,
+                rgba(0,0,0,0.95) 40%,
+                rgba(0,0,0,0.7) 70%,
+                rgba(0,0,0,0) 100%
+            );
+
             z-index: 3;
         }
+
         .watermark-insta {
             position: absolute;
             top: 60px;
             left: 60px;
-            color: rgba(255, 255, 255, 0.45);
+            color: rgba(255,255,255,0.45);
             font-size: 24px;
             font-weight: 800;
             letter-spacing: 1.5px;
             text-shadow: 0 2px 8px rgba(0,0,0,0.8);
             z-index: 4;
         }
+
         ${
           logoB64
             ? `
@@ -828,6 +1603,7 @@ const generateMarketValueHtml = ({
             right: 60px;
             z-index: 4;
         }
+
         .logo-bg-wrapper {
             background-color: #FFFFFF;
             border-radius: 6px;
@@ -837,6 +1613,7 @@ const generateMarketValueHtml = ({
             align-items: center;
             box-shadow: 0 4px 12px rgba(0,0,0,0.5);
         }
+
         .brand-logo {
             max-width: 250px;
             max-height: 92px;
@@ -846,20 +1623,26 @@ const generateMarketValueHtml = ({
         `
             : ""
         }
+
         .timeline-container {
             position: absolute;
             bottom: 80px;
             left: 0;
             width: 100%;
             padding: 0 40px;
+
             display: flex;
             flex-wrap: wrap;
             justify-content: center;
             align-items: flex-end;
+
             gap: 34px 20px;
+
             z-index: 4;
+
             max-height: 1300px;
         }
+
         .timeline-item {
             display: flex;
             flex-direction: column;
@@ -867,6 +1650,7 @@ const generateMarketValueHtml = ({
             gap: 14px;
             width: calc(33.33% - 20px);
         }
+
         .value-tag {
             background: #FFFFFF;
             color: #000000;
@@ -879,12 +1663,14 @@ const generateMarketValueHtml = ({
             text-transform: lowercase;
             letter-spacing: 0.5px;
         }
+
         .club-badge {
             width: 140px;
             height: 140px;
             object-fit: contain;
             filter: drop-shadow(0 10px 20px rgba(0,0,0,0.85));
         }
+
         .year-label {
             color: #FFFFFF;
             font-size: 38px;
@@ -892,6 +1678,7 @@ const generateMarketValueHtml = ({
             letter-spacing: 1px;
             text-shadow: 0 4px 10px rgba(0,0,0,0.9);
         }
+
         .player-header {
             position: absolute;
             top: 160px;
@@ -900,6 +1687,7 @@ const generateMarketValueHtml = ({
             text-align: center;
             z-index: 4;
         }
+
         .player-title {
             color: #FFFFFF;
             font-size: 64px;
@@ -911,6 +1699,7 @@ const generateMarketValueHtml = ({
             overflow-wrap: break-word;
             padding: 0 46px;
         }
+
         .subtitle-main {
             color: #3F9E40;
             font-size: 28px;
@@ -919,6 +1708,7 @@ const generateMarketValueHtml = ({
             text-transform: uppercase;
             margin-top: 6px;
         }
+
         .subtitle-sub {
             color: #A0A0A0;
             font-size: 16px;
@@ -927,190 +1717,480 @@ const generateMarketValueHtml = ({
             text-transform: uppercase;
             margin-top: 3px;
         }
+
     </style>
+
 </head>
+
 <body>
-    ${bgB64 ? `<img class="background-img" src="${bgB64}" />` : ""}
+
+    ${
+      bgB64
+        ? `<img class="background-img" src="${bgB64}" />`
+        : ""
+    }
+
     <div class="dark-overlay"></div>
+
     <div class="shadow-overlay"></div>
-    <div class="watermark-insta">${instagram_handle}</div>
+
+    <div class="watermark-insta">
+        ${instagram_handle || ""}
+    </div>
+
     ${
       logoB64
         ? `
     <div class="brand-logo-container">
+
         <div class="logo-bg-wrapper">
-            <img class="brand-logo" src="${logoB64}" />
+
+            <img
+                class="brand-logo"
+                src="${logoB64}"
+            />
+
         </div>
+
     </div>
     `
         : ""
     }
+
     ${
       player_name
         ? `
     <div class="player-header">
-        <div class="player-title">${player_name}</div>
-        <div class="subtitle-main">MARKET VALUE EVOLUTION</div>
-        <div class="subtitle-sub">EVOLUÇÃO DO VALOR DE MERCADO / EVOLUCIÓN DEL VALOR DE MERCADO</div>
+
+        <div class="player-title">
+            ${player_name}
+        </div>
+
+        <div class="subtitle-main">
+            MARKET VALUE EVOLUTION
+        </div>
+
+        <div class="subtitle-sub">
+            EVOLUÇÃO DO VALOR DE MERCADO / EVOLUCIÓN DEL VALOR DE MERCADO
+        </div>
+
     </div>
     `
         : ""
     }
+
     <div class="timeline-container">
+
         ${historyWithB64
           .map(
             (item) => `
             <div class="timeline-item">
-                ${item.formatted_value ? `<div class="value-tag">${item.formatted_value}</div>` : ""}
-                ${item.club_logo_b64 ? `<img class="club-badge" src="${item.club_logo_b64}" />` : ""}
-                ${item.year ? `<div class="year-label">${item.year}</div>` : ""}
+
+                ${
+                  item.formatted_value
+                    ? `
+                    <div class="value-tag">
+                        ${item.formatted_value}
+                    </div>
+                    `
+                    : ""
+                }
+
+                ${
+                  item.club_logo_b64
+                    ? `
+                    <img
+                        class="club-badge"
+                        src="${item.club_logo_b64}"
+                    />
+                    `
+                    : ""
+                }
+
+                ${
+                  item.year
+                    ? `
+                    <div class="year-label">
+                        ${item.year}
+                    </div>
+                    `
+                    : ""
+                }
+
             </div>
         `,
           )
           .join("")}
+
     </div>
+
 </body>
+
 </html>
 `;
 
-app.get("/api/scrape-transfermarkt-transfers", async (req, res) => {
-  try {
-    const limitInput = parseInt(req.query.limit);
-    const limit =
-      Number.isInteger(limitInput) && limitInput > 0
-        ? Math.min(limitInput, 100)
-        : 25;
-    const scraped_at = getBrasiliaDate();
-    const scrapedTransfers = await scrapeLatestTransfers(limit);
-    const transfers = scrapedTransfers.map((transfer) => ({
-      ...transfer,
-      date: scraped_at.brasilia,
-      date_iso: scraped_at.iso,
-    }));
 
-    return res.json({
-      source_url: TRANSFERMARKT_LATEST_TRANSFERS_URL,
-      scraped_at,
-      limit,
-      count: transfers.length,
-      transfers,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      error: "Erro ao fazer scraping dos dados da Transfermarkt",
-      details: error.message,
-    });
-  }
-});
+/*
+ * ============================================================
+ * ENDPOINT - SCRAPE TRANSFERMARKT
+ * ============================================================
+ */
 
-app.post("/api/generate-transfer-card", async (req, res) => {
-  try {
-    const {
-      player_name,
-      player_age,
-      season,
-      market_value_then,
-      fee,
-      background_image_url,
-      player_image_url,
-      from_team_url,
-      to_team_url,
-      logo_url = "https://futebolnatv.info/assets/logo/logo_green.png",
-      handshake_icon_url,
-      instagram_handle = "@futebolnatv.info",
-    } = req.body;
+app.get(
+  "/api/scrape-transfermarkt-transfers",
+  async (req, res) => {
+    try {
+      const limitInput =
+        parseInt(
+          req.query.limit,
+        );
 
-    const [bgB64, playerB64, fromB64, toB64, handshakeB64, logoB64] =
-      await Promise.all([
-        urlToBase64(toHighRes(background_image_url)),
-        urlToBase64(toHighRes(player_image_url)),
-        urlToBase64(toHighRes(from_team_url)),
-        urlToBase64(toHighRes(to_team_url)),
-        urlToBase64(toHighRes(handshake_icon_url)),
-        urlToBase64(logo_url),
+      const limit =
+        Number.isInteger(
+          limitInput,
+        ) &&
+        limitInput > 0
+          ? Math.min(
+              limitInput,
+              100,
+            )
+          : 25;
+
+      const scraped_at =
+        getBrasiliaDate();
+
+      const scrapedTransfers =
+        await scrapeLatestTransfers(
+          limit,
+        );
+
+      const transfers =
+        scrapedTransfers.map(
+          (transfer) => ({
+            ...transfer,
+
+            date:
+              scraped_at.brasilia,
+
+            date_iso:
+              scraped_at.iso,
+          }),
+        );
+
+      return res.json({
+        source_url:
+          TRANSFERMARKT_LATEST_TRANSFERS_URL,
+
+        scraped_at,
+
+        limit,
+
+        count:
+          transfers.length,
+
+        transfers,
+      });
+    } catch (error) {
+      console.error(
+        "[Transfermarkt]",
+        error,
+      );
+
+      return res.status(500).json({
+        error:
+          "Erro ao fazer scraping dos dados da Transfermarkt",
+
+        details:
+          error.message,
+      });
+    }
+  },
+);
+
+
+/*
+ * ============================================================
+ * ENDPOINT - TRANSFER CARD
+ * ============================================================
+ */
+
+app.post(
+  "/api/generate-transfer-card",
+  async (req, res) => {
+    try {
+      const {
+        player_name,
+        player_age,
+        season,
+        market_value_then,
+        fee,
+        background_image_url,
+        player_image_url,
+        from_team_url,
+        to_team_url,
+
+        logo_url =
+          "https://futebolnatv.info/assets/logo/logo_green.png",
+
+        handshake_icon_url,
+
+        instagram_handle =
+          "@futebolnatv.info",
+      } = req.body;
+
+      const [
+        bgB64,
+        playerB64,
+        fromB64,
+        toB64,
+        handshakeB64,
+        logoB64,
+      ] = await Promise.all([
+        urlToBase64(
+          toHighRes(
+            background_image_url,
+          ),
+        ),
+
+        urlToBase64(
+          toHighRes(
+            player_image_url,
+          ),
+        ),
+
+        urlToBase64(
+          toHighRes(
+            from_team_url,
+          ),
+        ),
+
+        urlToBase64(
+          toHighRes(
+            to_team_url,
+          ),
+        ),
+
+        urlToBase64(
+          toHighRes(
+            handshake_icon_url,
+          ),
+        ),
+
+        urlToBase64(
+          logo_url,
+        ),
       ]);
 
-    const htmlContent = generateTransferHtml({
-      player_name,
-      player_age,
-      season,
-      market_value_then,
-      fee,
-      bgB64,
-      playerB64,
-      fromB64,
-      toB64,
-      handshakeB64,
-      logoB64,
-      instagram_handle,
-    });
+      const htmlContent =
+        generateTransferHtml({
+          player_name,
+          player_age,
+          season,
+          market_value_then,
+          fee,
+          bgB64,
+          playerB64,
+          fromB64,
+          toB64,
+          handshakeB64,
+          logoB64,
+          instagram_handle,
+        });
 
-    const imageBuffer = await renderImageWithPuppeteer(htmlContent);
-    const video = await convertImageToMp4(imageBuffer);
-    return res.json(video);
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
-  }
-});
+      const imageBuffer =
+        await renderImageWithPuppeteer(
+          htmlContent,
+        );
 
-app.post("/api/generate-market-value-card", async (req, res) => {
-  try {
-    const {
-      player_name,
-      background_image_url,
-      logo_url = "https://futebolnatv.info/assets/logo/logo_green.png",
-      instagram_handle = "@futebolnatv.info",
-      lang = "pt",
-      transfermarkt_html,
-      history = [],
-    } = req.body;
+      const video =
+        await convertImageToMp4(
+          imageBuffer,
+        );
 
-    let marketHistory = [...history];
+      return res.json(video);
+    } catch (error) {
+      console.error(
+        "[Transfer Card]",
+        error,
+      );
 
-    if (transfermarkt_html && marketHistory.length === 0) {
-      const parsedClubs = parseTransfermarktHtml(transfermarkt_html, lang);
-      marketHistory = parsedClubs.map((item, index) => ({
-        year: item.year || `202${index + 1}`,
-        value: item.value || "500 mil €",
-        club_logo_url: item.club_logo_url,
-      }));
+      return res.status(500).json({
+        error:
+          error.message,
+      });
     }
+  },
+);
 
-    marketHistory.sort((a, b) => {
-      const yearA = parseInt(a.year) || 0;
-      const yearB = parseInt(b.year) || 0;
-      return yearA - yearB;
-    });
 
-    const [bgB64, logoB64] = await Promise.all([
-      urlToBase64(background_image_url),
-      urlToBase64(logo_url),
-    ]);
+/*
+ * ============================================================
+ * ENDPOINT - MARKET VALUE CARD
+ * ============================================================
+ */
 
-    const historyWithB64 = await Promise.all(
-      marketHistory.map(async (item) => ({
-        ...item,
-        formatted_value: formatMarketValue(item.value, lang),
-        club_logo_b64: await urlToBase64(item.club_logo_url),
-      })),
+app.post(
+  "/api/generate-market-value-card",
+  async (req, res) => {
+    try {
+      const {
+        player_name,
+
+        background_image_url,
+
+        logo_url =
+          "https://futebolnatv.info/assets/logo/logo_green.png",
+
+        instagram_handle =
+          "@futebolnatv.info",
+
+        lang = "pt",
+
+        transfermarkt_html,
+
+        history = [],
+      } = req.body;
+
+      let marketHistory = [
+        ...history,
+      ];
+
+      if (
+        transfermarkt_html &&
+        marketHistory.length === 0
+      ) {
+        const parsedClubs =
+          parseTransfermarktHtml(
+            transfermarkt_html,
+            lang,
+          );
+
+        marketHistory =
+          parsedClubs.map(
+            (item, index) => ({
+              year:
+                item.year ||
+                `202${index + 1}`,
+
+              value:
+                item.value ||
+                "500 mil €",
+
+              club_logo_url:
+                item.club_logo_url,
+            }),
+          );
+      }
+
+      marketHistory.sort(
+        (a, b) => {
+          const yearA =
+            parseInt(a.year) || 0;
+
+          const yearB =
+            parseInt(b.year) || 0;
+
+          return (
+            yearA - yearB
+          );
+        },
+      );
+
+      const [
+        bgB64,
+        logoB64,
+      ] = await Promise.all([
+        urlToBase64(
+          background_image_url,
+        ),
+
+        urlToBase64(
+          logo_url,
+        ),
+      ]);
+
+      const historyWithB64 =
+        await Promise.all(
+          marketHistory.map(
+            async (item) => ({
+              ...item,
+
+              formatted_value:
+                formatMarketValue(
+                  item.value,
+                  lang,
+                ),
+
+              club_logo_b64:
+                await urlToBase64(
+                  item.club_logo_url,
+                ),
+            }),
+          ),
+        );
+
+      const htmlContent =
+        generateMarketValueHtml({
+          player_name,
+          bgB64,
+          logoB64,
+          instagram_handle,
+          historyWithB64,
+          lang,
+        });
+
+      const imageBuffer =
+        await renderImageWithPuppeteer(
+          htmlContent,
+        );
+
+      const video =
+        await convertImageToMp4(
+          imageBuffer,
+        );
+
+      return res.json(video);
+    } catch (error) {
+      console.error(
+        "[Market Value Card]",
+        error,
+      );
+
+      return res.status(500).json({
+        error:
+          error.message,
+      });
+    }
+  },
+);
+
+
+/*
+ * ============================================================
+ * SERVER
+ * ============================================================
+ */
+
+const PORT =
+  process.env.PORT || 3000;
+
+app.listen(
+  PORT,
+  () => {
+    console.log(
+      `http://localhost:${PORT}`,
     );
 
-    const htmlContent = generateMarketValueHtml({
-      player_name,
-      bgB64,
-      logoB64,
-      instagram_handle,
-      historyWithB64,
-      lang,
-    });
+    console.log(
+      `[Server] Porta: ${PORT}`,
+    );
 
-    const imageBuffer = await renderImageWithPuppeteer(htmlContent);
-    const video = await convertImageToMp4(imageBuffer);
-    return res.json(video);
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
-  }
-});
+    console.log(
+      `[Server] Node: ${process.version}`,
+    );
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`http://localhost:${PORT}`));
+    console.log(
+      `[Server] Platform: ${process.platform}`,
+    );
+  },
+);
