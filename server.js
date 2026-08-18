@@ -34,13 +34,13 @@ const getPuppeteerLaunchOptions = (userDataDir) => {
         args: PUPPETEER_ARGS
     };
 
+    // Usa a variável de ambiente com o caminho exato que você encontrou
     if (process.env.PUPPETEER_EXECUTABLE_PATH) {
         options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
     }
 
-    if (userDataDir) {
-        options.userDataDir = userDataDir;
-    }
+    // Mantém o diretório de dados em /tmp para evitar problemas de permissão
+    options.userDataDir = userDataDir || '/tmp/puppeteer_cache';
 
     return options;
 };
