@@ -44,30 +44,26 @@ const LOCAL_HOSTS = new Set([
    ============================================================ */
 
 /*
- * O Easypanel não possui necessariamente:
- *
- * /usr/bin/chromium
- *
- * O Puppeteer baixa o Chrome para:
+ * O Puppeteer baixa o Chrome para o cache padrão:
  *
  * /root/.cache/puppeteer/chrome/
  *
- * Esta função procura automaticamente o executável.
+ * Procuramos automaticamente o executável.
+ *
+ * NÃO usamos PUPPETEER_EXECUTABLE_PATH.
  */
 
 const findChromeExecutable = () => {
   const candidates = [];
 
   /*
-   * Primeiro respeita variáveis configuradas manualmente.
+   * Permite CHROME_PATH caso exista no ambiente.
+   *
+   * Não usamos PUPPETEER_EXECUTABLE_PATH.
    */
   if (process.env.CHROME_PATH) {
-    candidates.push(process.env.CHROME_PATH);
-  }
-
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     candidates.push(
-      process.env.PUPPETEER_EXECUTABLE_PATH,
+      process.env.CHROME_PATH,
     );
   }
 
@@ -122,8 +118,13 @@ const findChromeExecutable = () => {
       .readdirSync(chromeCacheDir, {
         withFileTypes: true,
       })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
+      .filter(
+        (entry) =>
+          entry.isDirectory(),
+      )
+      .map(
+        (entry) => entry.name,
+      )
       .sort()
       .reverse();
 
@@ -139,11 +140,13 @@ const findChromeExecutable = () => {
           "chrome-linux64",
           "chrome",
         ),
+
         path.join(
           versionDir,
           "chrome-linux",
           "chrome",
         ),
+
         path.join(
           versionDir,
           "chrome",
@@ -162,12 +165,13 @@ const findChromeExecutable = () => {
   }
 
   /*
-   * Último recurso: procura recursivamente no cache.
+   * Último recurso:
+   * procura recursivamente no cache.
    */
 
   const recursiveFind = (
     directory,
-    maxDepth = 5,
+    maxDepth = 6,
     depth = 0,
   ) => {
     if (
@@ -180,9 +184,12 @@ const findChromeExecutable = () => {
     let entries;
 
     try {
-      entries = fs.readdirSync(directory, {
-        withFileTypes: true,
-      });
+      entries = fs.readdirSync(
+        directory,
+        {
+          withFileTypes: true,
+        },
+      );
     } catch (error) {
       return null;
     }
@@ -226,9 +233,15 @@ const CHROME_EXECUTABLE =
   findChromeExecutable();
 
 console.log("");
-console.log("==========================================");
-console.log(" BROWSER CONFIGURATION");
-console.log("==========================================");
+console.log(
+  "==========================================",
+);
+console.log(
+  " BROWSER CONFIGURATION",
+);
+console.log(
+  "==========================================",
+);
 console.log(
   "Platform:",
   process.platform,
@@ -239,18 +252,17 @@ console.log(
 );
 console.log(
   "Chrome:",
-  CHROME_EXECUTABLE || "NOT FOUND",
+  CHROME_EXECUTABLE ||
+    "NOT FOUND",
 );
 console.log(
   "CHROME_PATH:",
-  process.env.CHROME_PATH || "not set",
-);
-console.log(
-  "PUPPETEER_EXECUTABLE_PATH:",
-  process.env.PUPPETEER_EXECUTABLE_PATH ||
+  process.env.CHROME_PATH ||
     "not set",
 );
-console.log("==========================================");
+console.log(
+  "==========================================",
+);
 console.log("");
 
 if (!CHROME_EXECUTABLE) {
@@ -260,34 +272,20 @@ if (!CHROME_EXECUTABLE) {
 }
 
 /*
- * Argumentos do Chrome.
+ * IMPORTANTE:
+ *
+ * Não colocamos dezenas de flags aqui.
+ *
+ * O puppeteer-real-browser / chrome-launcher
+ * já monta suas próprias flags.
+ *
+ * Mantemos somente as flags necessárias
+ * para o ambiente do container.
  */
 const PUPPETEER_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
-  "--disable-gpu",
-  "--disable-extensions",
-  "--disable-background-networking",
-  "--disable-background-timer-throttling",
-  "--disable-backgrounding-occluded-windows",
-  "--disable-breakpad",
-  "--disable-component-extensions-with-background-pages",
-  "--disable-default-apps",
-  "--disable-features=Translate,BackForwardCache",
-  "--disable-hang-monitor",
-  "--disable-ipc-flooding-protection",
-  "--disable-popup-blocking",
-  "--disable-prompt-on-repost",
-  "--disable-renderer-backgrounding",
-  "--disable-sync",
-  "--disable-translate",
-  "--metrics-recording-only",
-  "--no-first-run",
-  "--no-default-browser-check",
-  "--password-store=basic",
-  "--use-mock-keychain",
-  "--mute-audio",
   "--disable-blink-features=AutomationControlled",
 ];
 
@@ -297,16 +295,14 @@ const PUPPETEER_ARGS = [
  */
 let browserLaunchPromise = null;
 
-/*
- * Inicia o puppeteer-real-browser.
- *
- * IMPORTANTE:
- * chromePath precisa estar em customConfig.
- */
+/* ============================================================
+   LAUNCH BROWSER
+   ============================================================ */
+
 const launchBrowser = async () => {
   if (!CHROME_EXECUTABLE) {
     throw new Error(
-      "Chrome/Chromium não encontrado. O Puppeteer precisa baixar o Chrome antes de iniciar o servidor.",
+      "Chrome/Chromium não encontrado no cache do Puppeteer.",
     );
   }
 
@@ -333,24 +329,44 @@ const launchBrowser = async () => {
   try {
     const result = await connect({
       /*
-       * No Easypanel usamos headless.
-       *
-       * Isso evita depender de DISPLAY/Xvfb.
+       * Headless porque o Easypanel não precisa
+       * de interface gráfica.
        */
       headless: true,
 
+      /*
+       * Poucas flags.
+       *
+       * O puppeteer-real-browser já trata
+       * as flags internas do Chrome.
+       */
       args: PUPPETEER_ARGS,
 
       /*
-       * CORREÇÃO PRINCIPAL.
+       * Chrome REAL encontrado no cache.
+       *
+       * Não usamos:
+       *
+       * PUPPETEER_EXECUTABLE_PATH
+       *
+       * O caminho é passado diretamente aqui.
        */
       customConfig: {
-        chromePath: CHROME_EXECUTABLE,
-        userDataDir,
+        chromePath:
+          CHROME_EXECUTABLE,
+
+        userDataDir:
+          userDataDir,
+
+        /*
+         * Deixa o chrome-launcher escolher
+         * uma porta livre para o DevTools.
+         */
+        port: 0,
       },
 
       /*
-       * Não precisamos de Xvfb em headless.
+       * Não iniciar Xvfb.
        */
       disableXvfb: true,
 
@@ -360,7 +376,8 @@ const launchBrowser = async () => {
       turnstile: true,
 
       /*
-       * Dá tempo suficiente para o Chrome iniciar.
+       * Tempo para o Chrome iniciar
+       * e para o Puppeteer conectar.
        */
       connectOption: {
         timeout: 120000,
@@ -368,51 +385,94 @@ const launchBrowser = async () => {
       },
     });
 
+    if (
+      !result ||
+      !result.browser ||
+      !result.page
+    ) {
+      throw new Error(
+        "Chrome iniciou, mas o puppeteer-real-browser não retornou browser/page.",
+      );
+    }
+
     console.log(
-      "[Chrome] Navegador conectado.",
+      "[Chrome] Navegador conectado com sucesso.",
     );
 
     return {
-      browser: result.browser,
-      page: result.page,
+      browser:
+        result.browser,
+
+      page:
+        result.page,
+
       userDataDir,
     };
   } catch (error) {
-    fs.rmSync(userDataDir, {
-      recursive: true,
-      force: true,
-    });
+    console.error(
+      "[Chrome] Falha ao iniciar/conectar.",
+    );
 
     console.error(
-      "[Chrome] Erro ao conectar:",
+      "[Chrome] Executável:",
+      CHROME_EXECUTABLE,
+    );
+
+    console.error(
+      "[Chrome] UserDataDir:",
+      userDataDir,
+    );
+
+    console.error(
+      "[Chrome] Erro:",
       error,
     );
+
+    try {
+      fs.rmSync(
+        userDataDir,
+        {
+          recursive: true,
+          force: true,
+        },
+      );
+    } catch (cleanupError) {
+      console.warn(
+        "[Chrome] Erro ao remover perfil:",
+        cleanupError.message,
+      );
+    }
 
     throw error;
   }
 };
 
-/*
- * Executa uma operação com navegador.
- *
- * Isso garante fechamento do Chrome mesmo em caso de erro.
- */
-const withBrowser = async (callback) => {
+/* ============================================================
+   WITH BROWSER
+   ============================================================ */
+
+const withBrowser = async (
+  callback,
+) => {
   /*
    * Impede duas inicializações simultâneas.
    */
   if (!browserLaunchPromise) {
     browserLaunchPromise =
-      launchBrowser().finally(() => {
-        browserLaunchPromise = null;
-      });
+      launchBrowser().finally(
+        () => {
+          browserLaunchPromise =
+            null;
+        },
+      );
   }
 
   const {
     browser,
     page,
     userDataDir,
-  } = await browserLaunchPromise;
+  } =
+    await browserLaunchPromise;
 
   try {
     return await callback(
@@ -430,10 +490,13 @@ const withBrowser = async (callback) => {
     }
 
     try {
-      fs.rmSync(userDataDir, {
-        recursive: true,
-        force: true,
-      });
+      fs.rmSync(
+        userDataDir,
+        {
+          recursive: true,
+          force: true,
+        },
+      );
     } catch (error) {
       console.warn(
         "[Chrome] Erro ao remover perfil:",
@@ -447,7 +510,9 @@ const withBrowser = async (callback) => {
    CORS / SEGURANÇA
    ============================================================ */
 
-const hostnameFromHeader = (value) => {
+const hostnameFromHeader = (
+  value,
+) => {
   if (!value) {
     return "";
   }
@@ -457,7 +522,9 @@ const hostnameFromHeader = (value) => {
       value.includes("://")
         ? value
         : `http://${value}`,
-    ).hostname.toLowerCase();
+    )
+      .hostname
+      .toLowerCase();
   } catch (error) {
     return "";
   }
@@ -470,9 +537,13 @@ const isAllowedHostname = (
     return false;
   }
 
-  const normalized = hostname
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "");
+  const normalized =
+    hostname
+      .toLowerCase()
+      .replace(
+        /^\[|\]$/g,
+        "",
+      );
 
   return (
     LOCAL_HOSTS.has(normalized) ||
@@ -483,82 +554,105 @@ const isAllowedHostname = (
   );
 };
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const referer = req.headers.referer;
-  const requestHost = req.headers.host;
+app.use(
+  (
+    req,
+    res,
+    next,
+  ) => {
+    const origin =
+      req.headers.origin;
 
-  const originHost =
-    hostnameFromHeader(origin);
+    const referer =
+      req.headers.referer;
 
-  const refererHost =
-    hostnameFromHeader(referer);
+    const requestHost =
+      req.headers.host;
 
-  const host =
-    hostnameFromHeader(requestHost);
+    const originHost =
+      hostnameFromHeader(
+        origin,
+      );
 
-  /*
-   * Requests vindas diretamente do próprio servidor
-   * também são permitidas.
-   */
-  const allowed = origin
-    ? isAllowedHostname(originHost)
-    : isAllowedHostname(refererHost) ||
-      isAllowedHostname(host);
+    const refererHost =
+      hostnameFromHeader(
+        referer,
+      );
 
-  /*
-   * IMPORTANTE:
-   *
-   * Healthcheck do Easypanel pode não mandar Origin
-   * nem Referer.
-   *
-   * Se for uma requisição local para o próprio servidor,
-   * permitimos.
-   */
-  const isLocalRequest =
-    !origin &&
-    !referer &&
-    LOCAL_HOSTS.has(
-      hostnameFromHeader(requestHost),
-    );
+    const host =
+      hostnameFromHeader(
+        requestHost,
+      );
 
-  if (!allowed && !isLocalRequest) {
-    return res.status(403).json({
-      error: "Origem nao autorizada",
-    });
-  }
+    const allowed = origin
+      ? isAllowedHostname(
+          originHost,
+        )
+      : isAllowedHostname(
+          refererHost,
+        ) ||
+        isAllowedHostname(
+          host,
+        );
 
-  if (
-    origin &&
-    isAllowedHostname(originHost)
-  ) {
+    const isLocalRequest =
+      !origin &&
+      !referer &&
+      LOCAL_HOSTS.has(
+        hostnameFromHeader(
+          requestHost,
+        ),
+      );
+
+    if (
+      !allowed &&
+      !isLocalRequest
+    ) {
+      return res.status(403).json({
+        error:
+          "Origem nao autorizada",
+      });
+    }
+
+    if (
+      origin &&
+      isAllowedHostname(
+        originHost,
+      )
+    ) {
+      res.setHeader(
+        "Access-Control-Allow-Origin",
+        origin,
+      );
+
+      res.setHeader(
+        "Vary",
+        "Origin",
+      );
+    }
+
     res.setHeader(
-      "Access-Control-Allow-Origin",
-      origin,
+      "Access-Control-Allow-Methods",
+      "GET,POST,OPTIONS",
     );
 
     res.setHeader(
-      "Vary",
-      "Origin",
+      "Access-Control-Allow-Headers",
+      "Content-Type,Authorization",
     );
-  }
 
-  res.setHeader(
-    "Access-Control-Allow-Methods",
-    "GET,POST,OPTIONS",
-  );
+    if (
+      req.method ===
+      "OPTIONS"
+    ) {
+      return res.sendStatus(
+        204,
+      );
+    }
 
-  res.setHeader(
-    "Access-Control-Allow-Headers",
-    "Content-Type,Authorization",
-  );
-
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
-  }
-
-  return next();
-});
+    return next();
+  },
+);
 
 app.use(
   express.json({
@@ -570,7 +664,9 @@ app.use(
    UTILITÁRIOS
    ============================================================ */
 
-const toHighRes = (url) => {
+const toHighRes = (
+  url,
+) => {
   if (!url) {
     return "";
   }
@@ -581,287 +677,375 @@ const toHighRes = (url) => {
   );
 };
 
-const urlToBase64 = async (url) => {
-  if (!url) {
-    return "";
-  }
-
-  try {
-    const response =
-      await axios.get(url, {
-        responseType: "arraybuffer",
-        timeout: 30000,
-        maxContentLength:
-          20 * 1024 * 1024,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36",
-          Accept:
-            "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-        },
-      });
-
-    const mimeType =
-      response.headers[
-        "content-type"
-      ] || "image/png";
-
-    return `data:${mimeType};base64,${Buffer.from(
-      response.data,
-    ).toString("base64")}`;
-  } catch (error) {
-    console.warn(
-      "[Image] Falha ao baixar:",
-      url,
-      error.message,
-    );
-
-    return "";
-  }
-};
-
-const getBrasiliaDate = () => {
-  const now = new Date();
-
-  return {
-    iso: now.toISOString(),
-
-    brasilia:
-      now.toLocaleString(
-        "pt-BR",
-        {
-          timeZone:
-            "America/Sao_Paulo",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-          hour12: false,
-        },
-      ),
-  };
-};
-
-/* ============================================================
-   TRANSFERMARKT - PARSER
-   ============================================================ */
-
-const parseLatestTransfersHtml = (
-  htmlContent,
-  limit = 25,
-) => {
-  const $ = cheerio.load(
-    htmlContent,
-  );
-
-  const absoluteUrl = (url) => {
+const urlToBase64 =
+  async (url) => {
     if (!url) {
       return "";
     }
 
     try {
-      return new URL(
-        url,
-        TRANSFERMARKT_BASE_URL,
-      ).href;
+      const response =
+        await axios.get(
+          url,
+          {
+            responseType:
+              "arraybuffer",
+
+            timeout: 30000,
+
+            maxContentLength:
+              20 *
+              1024 *
+              1024,
+
+            headers: {
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36",
+
+              Accept:
+                "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            },
+          },
+        );
+
+      const mimeType =
+        response.headers[
+          "content-type"
+        ] ||
+        "image/png";
+
+      return `data:${mimeType};base64,${Buffer.from(
+        response.data,
+      ).toString("base64")}`;
     } catch (error) {
+      console.warn(
+        "[Image] Falha ao baixar:",
+        url,
+        error.message,
+      );
+
       return "";
     }
   };
 
-  const cleanText = (value) =>
-    (value || "")
-      .replace(/\s+/g, " ")
-      .trim();
+const getBrasiliaDate =
+  () => {
+    const now =
+      new Date();
 
-  const imageUrl = (img) => {
-    const src =
-      img.attr("data-src") ||
-      img.attr("src") ||
-      "";
+    return {
+      iso:
+        now.toISOString(),
 
-    return absoluteUrl(src).replace(
-      /\/tiny\//g,
-      "/head/",
-    );
+      brasilia:
+        now.toLocaleString(
+          "pt-BR",
+          {
+            timeZone:
+              "America/Sao_Paulo",
+
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+
+            hour12: false,
+          },
+        ),
+    };
   };
 
-  const parsePlayer = (cell) => {
-    const playerLink = cell
-      .find(
-        'td.hauptlink a[href*="/profil/spieler/"]',
-      )
-      .first();
+/* ============================================================
+   TRANSFERMARKT - PARSER
+   ============================================================ */
 
-    const playerUrl =
-      absoluteUrl(
-        playerLink.attr("href"),
+const parseLatestTransfersHtml =
+  (
+    htmlContent,
+    limit = 25,
+  ) => {
+    const $ =
+      cheerio.load(
+        htmlContent,
       );
 
-    return {
-      name: cleanText(
-        playerLink.text(),
-      ),
+    const absoluteUrl =
+      (url) => {
+        if (!url) {
+          return "";
+        }
 
-      id: playerUrl,
-
-      url: playerUrl,
-
-      position: cleanText(
-        cell
-          .find(
-            "table.inline-table tr",
-          )
-          .eq(1)
-          .find("td")
-          .last()
-          .text(),
-      ),
-
-      image_url: imageUrl(
-        cell.find("img").first(),
-      ),
-    };
-  };
-
-  const parseClub = (cell) => {
-    const clubLink = cell
-      .find(
-        'td.hauptlink a[href*="/startseite/verein/"]',
-      )
-      .first();
-
-    const fallbackClubLink = cell
-      .find(
-        'a[href*="/startseite/verein/"]',
-      )
-      .first();
-
-    const selectedClubLink =
-      clubLink.length
-        ? clubLink
-        : fallbackClubLink;
-
-    const leagueLink = cell
-      .find(
-        'a[href*="/transfers/wettbewerb/"]',
-      )
-      .first();
-
-    const clubImg = cell
-      .find("img.tiny_wappen")
-      .first();
-
-    return {
-      name:
-        cleanText(
-          selectedClubLink.text(),
-        ) ||
-        cleanText(
-          clubImg.attr("alt"),
-        ),
-
-      full_name:
-        cleanText(
-          selectedClubLink.attr(
-            "title",
-          ),
-        ) ||
-        cleanText(
-          clubImg.attr("title"),
-        ),
-
-      url: absoluteUrl(
-        selectedClubLink.attr(
-          "href",
-        ),
-      ),
-
-      image_url: imageUrl(
-        clubImg,
-      ),
-
-      league: cleanText(
-        leagueLink.text(),
-      ),
-
-      league_url: absoluteUrl(
-        leagueLink.attr("href"),
-      ),
-    };
-  };
-
-  const parseFee = (cell) => {
-    const feeLink = cell
-      .find("a")
-      .first();
-
-    const value = cleanText(
-      feeLink.text() ||
-        cell.text(),
-    );
-
-    return {
-      value,
-      type: value,
-      url: absoluteUrl(
-        feeLink.attr("href"),
-      ),
-    };
-  };
-
-  return $("table.items > tbody > tr")
-    .filter(
-      (_, row) =>
-        $(row).children("td")
-          .length >= 6,
-    )
-    .slice(0, limit)
-    .map((_, row) => {
-      const cells = $(row).children(
-        "td",
-      );
-
-      const nationalities = cells
-        .eq(2)
-        .find("img")
-        .map((__, img) =>
-          cleanText(
-            $(img).attr("title") ||
-              $(img).attr("alt"),
-          ),
-        )
-        .get()
-        .filter(Boolean);
-
-      return {
-        player: parsePlayer(
-          cells.eq(0),
-        ),
-
-        age: cleanText(
-          cells.eq(1).text(),
-        ),
-
-        nationalities,
-
-        left: parseClub(
-          cells.eq(3),
-        ),
-
-        joined: parseClub(
-          cells.eq(4),
-        ),
-
-        fee: parseFee(
-          cells.eq(5),
-        ),
+        try {
+          return new URL(
+            url,
+            TRANSFERMARKT_BASE_URL,
+          ).href;
+        } catch (error) {
+          return "";
+        }
       };
-    })
-    .get();
-};
+
+    const cleanText =
+      (value) =>
+        (value || "")
+          .replace(
+            /\s+/g,
+            " ",
+          )
+          .trim();
+
+    const imageUrl =
+      (img) => {
+        const src =
+          img.attr(
+            "data-src",
+          ) ||
+          img.attr(
+            "src",
+          ) ||
+          "";
+
+        return absoluteUrl(
+          src,
+        ).replace(
+          /\/tiny\//g,
+          "/head/",
+        );
+      };
+
+    const parsePlayer =
+      (cell) => {
+        const playerLink =
+          cell
+            .find(
+              'td.hauptlink a[href*="/profil/spieler/"]',
+            )
+            .first();
+
+        const playerUrl =
+          absoluteUrl(
+            playerLink.attr(
+              "href",
+            ),
+          );
+
+        return {
+          name:
+            cleanText(
+              playerLink.text(),
+            ),
+
+          id:
+            playerUrl,
+
+          url:
+            playerUrl,
+
+          position:
+            cleanText(
+              cell
+                .find(
+                  "table.inline-table tr",
+                )
+                .eq(1)
+                .find("td")
+                .last()
+                .text(),
+            ),
+
+          image_url:
+            imageUrl(
+              cell
+                .find("img")
+                .first(),
+            ),
+        };
+      };
+
+    const parseClub =
+      (cell) => {
+        const clubLink =
+          cell
+            .find(
+              'td.hauptlink a[href*="/startseite/verein/"]',
+            )
+            .first();
+
+        const fallbackClubLink =
+          cell
+            .find(
+              'a[href*="/startseite/verein/"]',
+            )
+            .first();
+
+        const selectedClubLink =
+          clubLink.length
+            ? clubLink
+            : fallbackClubLink;
+
+        const leagueLink =
+          cell
+            .find(
+              'a[href*="/transfers/wettbewerb/"]',
+            )
+            .first();
+
+        const clubImg =
+          cell
+            .find(
+              "img.tiny_wappen",
+            )
+            .first();
+
+        return {
+          name:
+            cleanText(
+              selectedClubLink.text(),
+            ) ||
+            cleanText(
+              clubImg.attr(
+                "alt",
+              ),
+            ),
+
+          full_name:
+            cleanText(
+              selectedClubLink.attr(
+                "title",
+              ),
+            ) ||
+            cleanText(
+              clubImg.attr(
+                "title",
+              ),
+            ),
+
+          url:
+            absoluteUrl(
+              selectedClubLink.attr(
+                "href",
+              ),
+            ),
+
+          image_url:
+            imageUrl(
+              clubImg,
+            ),
+
+          league:
+            cleanText(
+              leagueLink.text(),
+            ),
+
+          league_url:
+            absoluteUrl(
+              leagueLink.attr(
+                "href",
+              ),
+            ),
+        };
+      };
+
+    const parseFee =
+      (cell) => {
+        const feeLink =
+          cell
+            .find("a")
+            .first();
+
+        const value =
+          cleanText(
+            feeLink.text() ||
+              cell.text(),
+          );
+
+        return {
+          value,
+
+          type:
+            value,
+
+          url:
+            absoluteUrl(
+              feeLink.attr(
+                "href",
+              ),
+            ),
+        };
+      };
+
+    return $(
+      "table.items > tbody > tr",
+    )
+      .filter(
+        (_, row) =>
+          $(row)
+            .children("td")
+            .length >= 6,
+      )
+      .slice(0, limit)
+      .map(
+        (_, row) => {
+          const cells =
+            $(row).children(
+              "td",
+            );
+
+          const nationalities =
+            cells
+              .eq(2)
+              .find("img")
+              .map(
+                (__, img) =>
+                  cleanText(
+                    $(img).attr(
+                      "title",
+                    ) ||
+                      $(img).attr(
+                        "alt",
+                      ),
+                  ),
+              )
+              .get()
+              .filter(Boolean);
+
+          return {
+            player:
+              parsePlayer(
+                cells.eq(0),
+              ),
+
+            age:
+              cleanText(
+                cells
+                  .eq(1)
+                  .text(),
+              ),
+
+            nationalities,
+
+            left:
+              parseClub(
+                cells.eq(3),
+              ),
+
+            joined:
+              parseClub(
+                cells.eq(4),
+              ),
+
+            fee:
+              parseFee(
+                cells.eq(5),
+              ),
+          };
+        },
+      )
+      .get();
+  };
 
 /* ============================================================
    TRANSFERMARKT - AXIOS
@@ -919,6 +1103,7 @@ const fetchTransfermarktHtmlWithPuppeteer =
           {
             waitUntil:
               "domcontentloaded",
+
             timeout: 60000,
           },
         );
@@ -945,7 +1130,8 @@ const fetchTransfermarktHtmlWithPuppeteer =
 
 const scrapeLatestTransfers =
   async (limit = 25) => {
-    let htmlContent = "";
+    let htmlContent =
+      "";
 
     /*
      * Primeiro tenta Axios.
@@ -964,7 +1150,9 @@ const scrapeLatestTransfers =
           limit,
         );
 
-      if (transfers.length > 0) {
+      if (
+        transfers.length > 0
+      ) {
         console.log(
           `[Transfermarkt] ${transfers.length} transferências encontradas via Axios.`,
         );
@@ -1001,130 +1189,158 @@ const scrapeLatestTransfers =
    MARKET VALUE
    ============================================================ */
 
-const formatMarketValue = (
-  val,
-  lang = "pt",
-) => {
-  if (!val) {
-    return "";
-  }
-
-  let num = null;
-
-  const str = val
-    .toString()
-    .trim()
-    .toLowerCase();
-
-  if (
-    str.includes("mil") ||
-    str.includes("k")
-  ) {
-    const match =
-      str.match(/[\d.,]+/);
-
-    if (match) {
-      num =
-        parseFloat(
-          match[0].replace(
-            ",",
-            ".",
-          ),
-        ) * 1000;
+const formatMarketValue =
+  (
+    val,
+    lang = "pt",
+  ) => {
+    if (!val) {
+      return "";
     }
-  } else if (
-    str.includes("mi") ||
-    str.includes("m")
-  ) {
-    const match =
-      str.match(/[\d.,]+/);
 
-    if (match) {
-      num =
-        parseFloat(
-          match[0].replace(
-            ",",
-            ".",
-          ),
-        ) * 1000000;
+    let num = null;
+
+    const str =
+      val
+        .toString()
+        .trim()
+        .toLowerCase();
+
+    if (
+      str.includes("mil") ||
+      str.includes("k")
+    ) {
+      const match =
+        str.match(
+          /[\d.,]+/,
+        );
+
+      if (match) {
+        num =
+          parseFloat(
+            match[0].replace(
+              ",",
+              ".",
+            ),
+          ) *
+          1000;
+      }
+    } else if (
+      str.includes("mi") ||
+      str.includes("m")
+    ) {
+      const match =
+        str.match(
+          /[\d.,]+/,
+        );
+
+      if (match) {
+        num =
+          parseFloat(
+            match[0].replace(
+              ",",
+              ".",
+            ),
+          ) *
+          1000000;
+      }
+    } else {
+      const match =
+        str.match(
+          /[\d.,]+/,
+        );
+
+      if (match) {
+        num =
+          parseFloat(
+            match[0].replace(
+              ",",
+              ".",
+            ),
+          );
+      }
     }
-  } else {
-    const match =
-      str.match(/[\d.,]+/);
 
-    if (match) {
-      num = parseFloat(
-        match[0].replace(
+    if (
+      num === null ||
+      Number.isNaN(num)
+    ) {
+      return val;
+    }
+
+    const symbol = "€";
+
+    let formattedNum =
+      "";
+
+    let suffix =
+      "";
+
+    if (num >= 1000000) {
+      const valM =
+        num / 1000000;
+
+      formattedNum =
+        Number.isInteger(
+          valM,
+        )
+          ? valM.toString()
+          : valM
+              .toFixed(1)
+              .replace(
+                ".",
+                ",",
+              );
+
+      suffix = "m";
+    } else if (
+      num >= 1000
+    ) {
+      const valK =
+        num / 1000;
+
+      formattedNum =
+        Number.isInteger(
+          valK,
+        )
+          ? valK.toString()
+          : valK
+              .toFixed(1)
+              .replace(
+                ".",
+                ",",
+              );
+
+      suffix = "k";
+    } else {
+      formattedNum =
+        num.toString();
+    }
+
+    const langLower =
+      lang.toLowerCase();
+
+    if (
+      langLower === "en"
+    ) {
+      formattedNum =
+        formattedNum.replace(
           ",",
           ".",
-        ),
-      );
+        );
+
+      return `${symbol}${formattedNum}${suffix}`;
     }
-  }
 
-  if (
-    num === null ||
-    Number.isNaN(num)
-  ) {
-    return val;
-  }
+    if (
+      langLower === "es" ||
+      langLower === "pt"
+    ) {
+      return `${formattedNum}${suffix} ${symbol}`;
+    }
 
-  const symbol = "€";
-
-  let formattedNum = "";
-  let suffix = "";
-
-  if (num >= 1000000) {
-    const valM =
-      num / 1000000;
-
-    formattedNum =
-      Number.isInteger(valM)
-        ? valM.toString()
-        : valM
-            .toFixed(1)
-            .replace(".", ",");
-
-    suffix = "m";
-  } else if (num >= 1000) {
-    const valK =
-      num / 1000;
-
-    formattedNum =
-      Number.isInteger(valK)
-        ? valK.toString()
-        : valK
-            .toFixed(1)
-            .replace(".", ",");
-
-    suffix = "k";
-  } else {
-    formattedNum =
-      num.toString();
-  }
-
-  const langLower =
-    lang.toLowerCase();
-
-  if (langLower === "en") {
-    formattedNum =
-      formattedNum.replace(
-        ",",
-        ".",
-      );
-
-    return `${symbol}${formattedNum}${suffix}`;
-  }
-
-  if (
-    langLower === "es" ||
-    langLower === "pt"
-  ) {
     return `${formattedNum}${suffix} ${symbol}`;
-  }
-
-  return `${formattedNum}${suffix} ${symbol}`;
-};
+  };
 
 /* ============================================================
    MARKET VALUE PARSER
@@ -1138,21 +1354,27 @@ function parseTransfermarktHtml(
     return [];
   }
 
-  const $ = cheerio.load(
-    htmlContent,
-  );
+  const $ =
+    cheerio.load(
+      htmlContent,
+    );
 
   const points = [];
 
   $("g.chart-dots image").each(
     (i, el) => {
       const href =
-        $(el).attr("xlink:href") ||
-        $(el).attr("href");
+        $(el).attr(
+          "xlink:href",
+        ) ||
+        $(el).attr(
+          "href",
+        );
 
       if (href) {
         points.push({
-          club_logo_url: href,
+          club_logo_url:
+            href,
         });
       }
     },
@@ -1166,28 +1388,29 @@ function parseTransfermarktHtml(
    ============================================================ */
 
 const renderImageWithPuppeteer =
-  async (htmlContent) => {
+  async (
+    htmlContent,
+  ) => {
     return withBrowser(
       async (page) => {
-        await page.setViewport({
-          width: 1080,
-          height: 1920,
-          deviceScaleFactor: 2,
-        });
+        await page.setViewport(
+          {
+            width: 1080,
+            height: 1920,
+            deviceScaleFactor: 2,
+          },
+        );
 
         await page.setContent(
           htmlContent,
           {
             waitUntil:
               "networkidle0",
+
             timeout: 60000,
           },
         );
 
-        /*
-         * Dá alguns ms para fontes/imagens terminarem
-         * de renderizar.
-         */
         await new Promise(
           (resolve) =>
             setTimeout(
@@ -1196,9 +1419,11 @@ const renderImageWithPuppeteer =
             ),
         );
 
-        return await page.screenshot({
-          type: "png",
-        });
+        return await page.screenshot(
+          {
+            type: "png",
+          },
+        );
       },
     );
   };
@@ -1210,7 +1435,10 @@ const renderImageWithPuppeteer =
 const convertImageToMp4 =
   (imageBuffer) =>
     new Promise(
-      (resolve, reject) => {
+      (
+        resolve,
+        reject,
+      ) => {
         const requestTmpDir =
           fs.mkdtempSync(
             path.join(
@@ -1219,10 +1447,11 @@ const convertImageToMp4 =
             ),
           );
 
-        const imgPath = path.join(
-          requestTmpDir,
-          "card.png",
-        );
+        const imgPath =
+          path.join(
+            requestTmpDir,
+            "card.png",
+          );
 
         const videoOutputPath =
           path.join(
@@ -1230,22 +1459,23 @@ const convertImageToMp4 =
             "video.mp4",
           );
 
-        const cleanup = () => {
-          try {
-            fs.rmSync(
-              requestTmpDir,
-              {
-                recursive: true,
-                force: true,
-              },
-            );
-          } catch (error) {
-            console.warn(
-              "[FFmpeg] Cleanup:",
-              error.message,
-            );
-          }
-        };
+        const cleanup =
+          () => {
+            try {
+              fs.rmSync(
+                requestTmpDir,
+                {
+                  recursive: true,
+                  force: true,
+                },
+              );
+            } catch (error) {
+              console.warn(
+                "[FFmpeg] Cleanup:",
+                error.message,
+              );
+            }
+          };
 
         try {
           fs.writeFileSync(
@@ -1270,17 +1500,22 @@ const convertImageToMp4 =
           "[FFmpeg] Gerando vídeo...",
         );
 
-        const command = ffmpeg()
-          .input(imgPath)
-          .inputOptions([
-            "-loop 1",
-            "-t",
-            `${duration}`,
-          ]);
+        const command =
+          ffmpeg()
+            .input(imgPath)
+            .inputOptions([
+              "-loop 1",
+              "-t",
+              `${duration}`,
+            ]);
 
-        if (hasLocalAudio) {
+        if (
+          hasLocalAudio
+        ) {
           command
-            .input(LOCAL_AUDIO_PATH)
+            .input(
+              LOCAL_AUDIO_PATH,
+            )
             .inputOptions([
               "-stream_loop",
               "-1",
@@ -1289,7 +1524,11 @@ const convertImageToMp4 =
 
         command
           .fps(30)
-          .videoCodec("libx264")
+
+          .videoCodec(
+            "libx264",
+          )
+
           .outputOptions([
             "-preset",
             "ultrafast",
@@ -1310,24 +1549,37 @@ const convertImageToMp4 =
             "+faststart",
           ]);
 
-        if (hasLocalAudio) {
+        if (
+          hasLocalAudio
+        ) {
           command
-            .audioCodec("aac")
-            .audioBitrate("128k")
+            .audioCodec(
+              "aac",
+            )
+
+            .audioBitrate(
+              "128k",
+            )
+
             .audioFilters(
               `volume=${AUDIO_VOLUME}`,
             )
+
             .outputOptions([
               "-shortest",
             ]);
         }
 
         command
-          .output(videoOutputPath)
+          .output(
+            videoOutputPath,
+          )
 
           .on(
             "start",
-            (commandLine) => {
+            (
+              commandLine,
+            ) => {
               console.log(
                 "[FFmpeg] Command:",
                 commandLine,
@@ -1337,10 +1589,11 @@ const convertImageToMp4 =
 
           .on(
             "stderr",
-            (stderrLine) => {
+            (
+              stderrLine,
+            ) => {
               /*
-               * Não loga tudo para não poluir
-               * o Easypanel.
+               * Não loga tudo.
                */
             },
           )
@@ -1403,23 +1656,25 @@ const convertImageToMp4 =
    HTML - TRANSFER CARD
    ============================================================ */
 
-const generateTransferHtml = ({
-  player_name,
-  player_age,
-  season,
-  market_value_then,
-  fee,
-  bgB64,
-  playerB64,
-  fromB64,
-  toB64,
-  handshakeB64,
-  logoB64,
-  instagram_handle,
-}) => `
+const generateTransferHtml =
+  ({
+    player_name,
+    player_age,
+    season,
+    market_value_then,
+    fee,
+    bgB64,
+    playerB64,
+    fromB64,
+    toB64,
+    handshakeB64,
+    logoB64,
+    instagram_handle,
+  }) => `
 <!DOCTYPE html>
 <html>
 <head>
+
 <meta charset="utf-8">
 
 <link
@@ -1818,14 +2073,15 @@ ${
    HTML - MARKET VALUE
    ============================================================ */
 
-const generateMarketValueHtml = ({
-  player_name,
-  bgB64,
-  logoB64,
-  instagram_handle,
-  historyWithB64,
-  lang = "pt",
-}) => `
+const generateMarketValueHtml =
+  ({
+    player_name,
+    bgB64,
+    logoB64,
+    instagram_handle,
+    historyWithB64,
+    lang = "pt",
+  }) => `
 <!DOCTYPE html>
 <html>
 <head>
@@ -2169,11 +2425,17 @@ app.get(
   (req, res) => {
     res.json({
       ok: true,
+
       service:
         "fut-ffmpeg",
+
       chrome:
-        CHROME_EXECUTABLE || null,
-      port: PORT,
+        CHROME_EXECUTABLE ||
+        null,
+
+      port:
+        PORT,
+
       timestamp:
         new Date().toISOString(),
     });
@@ -2185,8 +2447,10 @@ app.get(
   (req, res) => {
     res.json({
       ok: true,
+
       chrome:
-        CHROME_EXECUTABLE || null,
+        CHROME_EXECUTABLE ||
+        null,
     });
   },
 );
@@ -2314,47 +2578,45 @@ app.post(
         toB64,
         handshakeB64,
         logoB64,
-      ] = await Promise.all([
-        urlToBase64(
-          toHighRes(
-            background_image_url,
+      ] =
+        await Promise.all([
+          urlToBase64(
+            toHighRes(
+              background_image_url,
+            ),
           ),
-        ),
 
-        urlToBase64(
-          toHighRes(
-            player_image_url,
+          urlToBase64(
+            toHighRes(
+              player_image_url,
+            ),
           ),
-        ),
 
-        urlToBase64(
-          toHighRes(
-            from_team_url,
+          urlToBase64(
+            toHighRes(
+              from_team_url,
+            ),
           ),
-        ),
 
-        urlToBase64(
-          toHighRes(
-            to_team_url,
+          urlToBase64(
+            toHighRes(
+              to_team_url,
+            ),
           ),
-        ),
 
-        urlToBase64(
-          toHighRes(
-            handshake_icon_url,
+          urlToBase64(
+            toHighRes(
+              handshake_icon_url,
+            ),
           ),
-        ),
 
-        urlToBase64(
-          logo_url,
-        ),
-      ]);
+          urlToBase64(
+            logo_url,
+          ),
+        ]);
 
       /*
-       * playerB64 continua sendo baixado para manter
-       * compatibilidade com o payload atual.
-       *
-       * A arte atual não utiliza a imagem do jogador.
+       * Mantém compatibilidade com o payload.
        */
       void playerB64;
 
@@ -2469,7 +2731,10 @@ app.post(
 
         marketHistory =
           parsedClubs.map(
-            (item, index) => ({
+            (
+              item,
+              index,
+            ) => ({
               year:
                 item.year ||
                 `202${index + 1}`,
@@ -2488,7 +2753,10 @@ app.post(
        * Ordena por ano.
        */
       marketHistory.sort(
-        (a, b) => {
+        (
+          a,
+          b,
+        ) => {
           const yearA =
             parseInt(
               a.year,
@@ -2501,27 +2769,33 @@ app.post(
               10,
             ) || 0;
 
-          return yearA - yearB;
+          return (
+            yearA -
+            yearB
+          );
         },
       );
 
       const [
         bgB64,
         logoB64,
-      ] = await Promise.all([
-        urlToBase64(
-          background_image_url,
-        ),
+      ] =
+        await Promise.all([
+          urlToBase64(
+            background_image_url,
+          ),
 
-        urlToBase64(
-          logo_url,
-        ),
-      ]);
+          urlToBase64(
+            logo_url,
+          ),
+        ]);
 
       const historyWithB64 =
         await Promise.all(
           marketHistory.map(
-            async (item) => ({
+            async (
+              item,
+            ) => ({
               ...item,
 
               formatted_value:
@@ -2611,8 +2885,12 @@ app.use(
       error,
     );
 
-    if (res.headersSent) {
-      return next(error);
+    if (
+      res.headersSent
+    ) {
+      return next(
+        error,
+      );
     }
 
     return res.status(500).json({
@@ -2632,27 +2910,38 @@ app.listen(
   "0.0.0.0",
   () => {
     console.log("");
+
     console.log(
       "==========================================",
     );
+
     console.log(
       " FUT-FFMPEG SERVER",
     );
+
     console.log(
       "==========================================",
     );
+
     console.log(
       `Porta: ${PORT}`,
     );
+
     console.log(
       `URL interna: http://0.0.0.0:${PORT}`,
     );
+
     console.log(
-      `Chrome: ${CHROME_EXECUTABLE || "NÃO ENCONTRADO"}`,
+      `Chrome: ${
+        CHROME_EXECUTABLE ||
+        "NÃO ENCONTRADO"
+      }`,
     );
+
     console.log(
       "==========================================",
     );
+
     console.log("");
   },
 );
