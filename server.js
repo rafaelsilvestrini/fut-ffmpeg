@@ -1,6 +1,5 @@
 const express = require("express");
 const axios = require("axios");
-const puppeteer = require("puppeteer");
 const { connect } = require("puppeteer-real-browser");
 const cheerio = require("cheerio");
 const ffmpeg = require("fluent-ffmpeg");
@@ -10,223 +9,19 @@ const os = require("os");
 
 const app = express();
 
-/*
- * ============================================================
- * CHROME / PUPPETEER
- * ============================================================
- *
- * No EasyPanel, o Puppeteer instala automaticamente o
- * Chrome for Testing em:
- *
- * /root/.cache/puppeteer/chrome/...
- *
- * NÃO usamos /usr/bin/chromium porque esse executável
- * não existe no teu container.
- *
- * O caminho é resolvido pelo próprio Puppeteer.
- */
+/* ============================================================
+   CONFIGURAÇÃO
+   ============================================================ */
 
-let RESOLVED_CHROME_PATH = process.env.CHROME_PATH || "";
+const PORT = Number(process.env.PORT) || 3000;
 
-const resolveChromePath = async () => {
-  if (RESOLVED_CHROME_PATH && fs.existsSync(RESOLVED_CHROME_PATH)) {
-    return RESOLVED_CHROME_PATH;
-  }
-
-  try {
-    const executablePath = await puppeteer.executablePath();
-
-    if (executablePath && fs.existsSync(executablePath)) {
-      RESOLVED_CHROME_PATH = executablePath;
-      process.env.CHROME_PATH = executablePath;
-
-      console.log(`[Chrome] Chrome encontrado pelo Puppeteer: ${executablePath}`);
-
-      return executablePath;
-    }
-  } catch (error) {
-    console.error(
-      `[Chrome] Erro ao obter executablePath do Puppeteer: ${error.message}`,
-    );
-  }
-
-  /*
-   * Fallback: procurar manualmente no cache do Puppeteer.
-   */
-  const puppeteerCache =
-    process.env.PUPPETEER_CACHE_DIR ||
-    path.join(os.homedir(), ".cache", "puppeteer");
-
-  const possiblePaths = [
-    path.join(
-      puppeteerCache,
-      "chrome",
-      "linux-152.0.7977.42",
-      "chrome-linux64",
-      "chrome",
-    ),
-    path.join(
-      puppeteerCache,
-      "chrome",
-      "linux-152.0.7977.42",
-      "chrome-linux",
-      "chrome",
-    ),
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-  ];
-
-  for (const possiblePath of possiblePaths) {
-    if (fs.existsSync(possiblePath)) {
-      RESOLVED_CHROME_PATH = possiblePath;
-      process.env.CHROME_PATH = possiblePath;
-
-      console.log(`[Chrome] Chrome encontrado: ${possiblePath}`);
-
-      return possiblePath;
-    }
-  }
-
-  throw new Error(
-    `Chrome não encontrado. Puppeteer executablePath: ${RESOLVED_CHROME_PATH || "indisponível"}`,
-  );
-};
-
-const createChromeUserDataDir = () => {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "chrome-user-data-"));
-};
-
-const PUPPETEER_ARGS = [
-  "--no-sandbox",
-  "--disable-setuid-sandbox",
-  "--disable-dev-shm-usage",
-  "--disable-gpu",
-  "--disable-extensions",
-  "--disable-background-networking",
-  "--disable-background-timer-throttling",
-  "--disable-backgrounding-occluded-windows",
-  "--disable-breakpad",
-  "--disable-component-extensions-with-background-pages",
-  "--disable-component-update",
-  "--disable-default-apps",
-  "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints,UseDBus",
-  "--disable-hang-monitor",
-  "--disable-ipc-flooding-protection",
-  "--disable-popup-blocking",
-  "--disable-prompt-on-repost",
-  "--disable-renderer-backgrounding",
-  "--disable-sync",
-  "--force-color-profile=srgb",
-  "--metrics-recording-only",
-  "--no-first-run",
-  "--no-default-browser-check",
-  "--password-store=basic",
-  "--use-mock-keychain",
-  "--mute-audio",
-  "--disable-blink-features=AutomationControlled",
-];
-
-/*
- * Inicializa o Chrome através do puppeteer-real-browser.
- *
- * IMPORTANTE:
- * CHROME_PATH é definido ANTES do connect().
- */
-const getPuppeteerLaunchOptions = async () => {
-  const chromePath = await resolveChromePath();
-  const userDataDir = createChromeUserDataDir();
-
-  console.log(`[Chrome] Iniciando Chrome: ${chromePath}`);
-  console.log(`[Chrome] User data dir: ${userDataDir}`);
-
-  try {
-    const { browser, page } = await connect({
-      headless: true,
-
-      customConfig: {
-        chromePath,
-        userDataDir,
-      },
-
-      args: PUPPETEER_ARGS,
-
-      turnstile: true,
-
-      /*
-       * Como estamos em headless true, não precisamos
-       * do Xvfb.
-       */
-      disableXvfb: true,
-
-      connectOption: {
-        timeout: 60000,
-        defaultViewport: null,
-      },
-    });
-
-    console.log("[Chrome] Browser conectado com sucesso.");
-
-    return {
-      browser,
-      page,
-      userDataDir,
-    };
-  } catch (error) {
-    /*
-     * Se o Chrome morrer durante o arranque, limpar
-     * o perfil temporário.
-     */
-    fs.rmSync(userDataDir, {
-      recursive: true,
-      force: true,
-    });
-
-    throw error;
-  }
-};
-
-const cleanupChromeUserDataDir = (userDataDir) => {
-  if (!userDataDir) return;
-
-  try {
-    fs.rmSync(userDataDir, {
-      recursive: true,
-      force: true,
-    });
-  } catch (error) {
-    console.warn(
-      `[Chrome] Não foi possível limpar userDataDir: ${error.message}`,
-    );
-  }
-};
-
-/*
- * Resolve o Chrome assim que o servidor arranca.
- *
- * O erro aqui não impede o Express de arrancar.
- * Se o Chrome falhar, veremos o erro no endpoint.
- */
-resolveChromePath()
-  .then((chromePath) => {
-    console.log(`[Chrome] Pronto: ${chromePath}`);
-  })
-  .catch((error) => {
-    console.error(`[Chrome] AVISO: ${error.message}`);
-  });
-
-
-/*
- * ============================================================
- * CONFIGURAÇÃO
- * ============================================================
- */
-
-const LOCAL_AUDIO_PATH = path.join(__dirname, "audio", "audio.mp3");
+const LOCAL_AUDIO_PATH = path.join(
+  __dirname,
+  "audio",
+  "audio.mp3",
+);
 
 const VIDEO_DURATION_SECONDS = 30;
-
 const AUDIO_VOLUME = 0.1;
 
 const TRANSFERMARKT_LATEST_TRANSFERS_URL =
@@ -244,27 +39,436 @@ const LOCAL_HOSTS = new Set([
   "0.0.0.0",
 ]);
 
+/* ============================================================
+   CHROME / PUPPETEER
+   ============================================================ */
 
 /*
- * ============================================================
- * HOST / CORS
- * ============================================================
+ * O Easypanel não possui necessariamente:
+ *
+ * /usr/bin/chromium
+ *
+ * O Puppeteer baixa o Chrome para:
+ *
+ * /root/.cache/puppeteer/chrome/
+ *
+ * Esta função procura automaticamente o executável.
  */
 
+const findChromeExecutable = () => {
+  const candidates = [];
+
+  /*
+   * Primeiro respeita variáveis configuradas manualmente.
+   */
+  if (process.env.CHROME_PATH) {
+    candidates.push(process.env.CHROME_PATH);
+  }
+
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    candidates.push(
+      process.env.PUPPETEER_EXECUTABLE_PATH,
+    );
+  }
+
+  /*
+   * Caminhos comuns no Linux.
+   */
+  candidates.push(
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/opt/google/chrome/chrome",
+    "/opt/google/chrome/google-chrome",
+  );
+
+  for (const candidate of candidates) {
+    if (
+      candidate &&
+      fs.existsSync(candidate) &&
+      fs.statSync(candidate).isFile()
+    ) {
+      return candidate;
+    }
+  }
+
+  /*
+   * Cache padrão do Puppeteer.
+   *
+   * Exemplo:
+   *
+   * /root/.cache/puppeteer/chrome/
+   *   linux-152.0.7977.42/
+   *     chrome-linux64/
+   *       chrome
+   */
+
+  const puppeteerCache =
+    process.env.PUPPETEER_CACHE_DIR ||
+    path.join(
+      os.homedir(),
+      ".cache",
+      "puppeteer",
+    );
+
+  const chromeCacheDir = path.join(
+    puppeteerCache,
+    "chrome",
+  );
+
+  if (fs.existsSync(chromeCacheDir)) {
+    const versions = fs
+      .readdirSync(chromeCacheDir, {
+        withFileTypes: true,
+      })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+      .reverse();
+
+    for (const version of versions) {
+      const versionDir = path.join(
+        chromeCacheDir,
+        version,
+      );
+
+      const possibleExecutables = [
+        path.join(
+          versionDir,
+          "chrome-linux64",
+          "chrome",
+        ),
+        path.join(
+          versionDir,
+          "chrome-linux",
+          "chrome",
+        ),
+        path.join(
+          versionDir,
+          "chrome",
+        ),
+      ];
+
+      for (const executable of possibleExecutables) {
+        if (
+          fs.existsSync(executable) &&
+          fs.statSync(executable).isFile()
+        ) {
+          return executable;
+        }
+      }
+    }
+  }
+
+  /*
+   * Último recurso: procura recursivamente no cache.
+   */
+
+  const recursiveFind = (
+    directory,
+    maxDepth = 5,
+    depth = 0,
+  ) => {
+    if (
+      depth > maxDepth ||
+      !fs.existsSync(directory)
+    ) {
+      return null;
+    }
+
+    let entries;
+
+    try {
+      entries = fs.readdirSync(directory, {
+        withFileTypes: true,
+      });
+    } catch (error) {
+      return null;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(
+        directory,
+        entry.name,
+      );
+
+      if (
+        entry.isFile() &&
+        entry.name === "chrome"
+      ) {
+        return fullPath;
+      }
+
+      if (entry.isDirectory()) {
+        const found = recursiveFind(
+          fullPath,
+          maxDepth,
+          depth + 1,
+        );
+
+        if (found) {
+          return found;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  return recursiveFind(
+    puppeteerCache,
+    6,
+  );
+};
+
+const CHROME_EXECUTABLE =
+  findChromeExecutable();
+
+console.log("");
+console.log("==========================================");
+console.log(" BROWSER CONFIGURATION");
+console.log("==========================================");
+console.log(
+  "Platform:",
+  process.platform,
+);
+console.log(
+  "Architecture:",
+  process.arch,
+);
+console.log(
+  "Chrome:",
+  CHROME_EXECUTABLE || "NOT FOUND",
+);
+console.log(
+  "CHROME_PATH:",
+  process.env.CHROME_PATH || "not set",
+);
+console.log(
+  "PUPPETEER_EXECUTABLE_PATH:",
+  process.env.PUPPETEER_EXECUTABLE_PATH ||
+    "not set",
+);
+console.log("==========================================");
+console.log("");
+
+if (!CHROME_EXECUTABLE) {
+  console.error(
+    "ERRO: Chrome/Chromium não foi encontrado.",
+  );
+}
+
+/*
+ * Argumentos do Chrome.
+ */
+const PUPPETEER_ARGS = [
+  "--no-sandbox",
+  "--disable-setuid-sandbox",
+  "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--disable-extensions",
+  "--disable-background-networking",
+  "--disable-background-timer-throttling",
+  "--disable-backgrounding-occluded-windows",
+  "--disable-breakpad",
+  "--disable-component-extensions-with-background-pages",
+  "--disable-default-apps",
+  "--disable-features=Translate,BackForwardCache",
+  "--disable-hang-monitor",
+  "--disable-ipc-flooding-protection",
+  "--disable-popup-blocking",
+  "--disable-prompt-on-repost",
+  "--disable-renderer-backgrounding",
+  "--disable-sync",
+  "--disable-translate",
+  "--metrics-recording-only",
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--password-store=basic",
+  "--use-mock-keychain",
+  "--mute-audio",
+  "--disable-blink-features=AutomationControlled",
+];
+
+/*
+ * Controle para não iniciar dezenas de Chrome
+ * simultaneamente se chegarem várias requisições.
+ */
+let browserLaunchPromise = null;
+
+/*
+ * Inicia o puppeteer-real-browser.
+ *
+ * IMPORTANTE:
+ * chromePath precisa estar em customConfig.
+ */
+const launchBrowser = async () => {
+  if (!CHROME_EXECUTABLE) {
+    throw new Error(
+      "Chrome/Chromium não encontrado. O Puppeteer precisa baixar o Chrome antes de iniciar o servidor.",
+    );
+  }
+
+  const userDataDir = fs.mkdtempSync(
+    path.join(
+      os.tmpdir(),
+      "transfer-browser-",
+    ),
+  );
+
+  console.log("");
+  console.log(
+    "[Chrome] Iniciando navegador...",
+  );
+  console.log(
+    "[Chrome] Executável:",
+    CHROME_EXECUTABLE,
+  );
+  console.log(
+    "[Chrome] UserDataDir:",
+    userDataDir,
+  );
+
+  try {
+    const result = await connect({
+      /*
+       * No Easypanel usamos headless.
+       *
+       * Isso evita depender de DISPLAY/Xvfb.
+       */
+      headless: true,
+
+      args: PUPPETEER_ARGS,
+
+      /*
+       * CORREÇÃO PRINCIPAL.
+       */
+      customConfig: {
+        chromePath: CHROME_EXECUTABLE,
+        userDataDir,
+      },
+
+      /*
+       * Não precisamos de Xvfb em headless.
+       */
+      disableXvfb: true,
+
+      /*
+       * Mantém suporte ao Turnstile.
+       */
+      turnstile: true,
+
+      /*
+       * Dá tempo suficiente para o Chrome iniciar.
+       */
+      connectOption: {
+        timeout: 120000,
+        defaultViewport: null,
+      },
+    });
+
+    console.log(
+      "[Chrome] Navegador conectado.",
+    );
+
+    return {
+      browser: result.browser,
+      page: result.page,
+      userDataDir,
+    };
+  } catch (error) {
+    fs.rmSync(userDataDir, {
+      recursive: true,
+      force: true,
+    });
+
+    console.error(
+      "[Chrome] Erro ao conectar:",
+      error,
+    );
+
+    throw error;
+  }
+};
+
+/*
+ * Executa uma operação com navegador.
+ *
+ * Isso garante fechamento do Chrome mesmo em caso de erro.
+ */
+const withBrowser = async (callback) => {
+  /*
+   * Impede duas inicializações simultâneas.
+   */
+  if (!browserLaunchPromise) {
+    browserLaunchPromise =
+      launchBrowser().finally(() => {
+        browserLaunchPromise = null;
+      });
+  }
+
+  const {
+    browser,
+    page,
+    userDataDir,
+  } = await browserLaunchPromise;
+
+  try {
+    return await callback(
+      page,
+      browser,
+    );
+  } finally {
+    try {
+      await browser.close();
+    } catch (error) {
+      console.warn(
+        "[Chrome] Erro ao fechar:",
+        error.message,
+      );
+    }
+
+    try {
+      fs.rmSync(userDataDir, {
+        recursive: true,
+        force: true,
+      });
+    } catch (error) {
+      console.warn(
+        "[Chrome] Erro ao remover perfil:",
+        error.message,
+      );
+    }
+  }
+};
+
+/* ============================================================
+   CORS / SEGURANÇA
+   ============================================================ */
+
 const hostnameFromHeader = (value) => {
-  if (!value) return "";
+  if (!value) {
+    return "";
+  }
 
   try {
     return new URL(
-      value.includes("://") ? value : `http://${value}`,
+      value.includes("://")
+        ? value
+        : `http://${value}`,
     ).hostname.toLowerCase();
   } catch (error) {
     return "";
   }
 };
 
-const isAllowedHostname = (hostname) => {
-  if (!hostname) return false;
+const isAllowedHostname = (
+  hostname,
+) => {
+  if (!hostname) {
+    return false;
+  }
 
   const normalized = hostname
     .toLowerCase()
@@ -273,7 +477,9 @@ const isAllowedHostname = (hostname) => {
   return (
     LOCAL_HOSTS.has(normalized) ||
     normalized === ALLOWED_DOMAIN ||
-    normalized.endsWith(`.${ALLOWED_DOMAIN}`)
+    normalized.endsWith(
+      `.${ALLOWED_DOMAIN}`,
+    )
   );
 };
 
@@ -282,28 +488,59 @@ app.use((req, res, next) => {
   const referer = req.headers.referer;
   const requestHost = req.headers.host;
 
-  const originHost = hostnameFromHeader(origin);
-  const refererHost = hostnameFromHeader(referer);
-  const host = hostnameFromHeader(requestHost);
+  const originHost =
+    hostnameFromHeader(origin);
 
+  const refererHost =
+    hostnameFromHeader(referer);
+
+  const host =
+    hostnameFromHeader(requestHost);
+
+  /*
+   * Requests vindas diretamente do próprio servidor
+   * também são permitidas.
+   */
   const allowed = origin
     ? isAllowedHostname(originHost)
     : isAllowedHostname(refererHost) ||
       isAllowedHostname(host);
 
-  if (!allowed) {
+  /*
+   * IMPORTANTE:
+   *
+   * Healthcheck do Easypanel pode não mandar Origin
+   * nem Referer.
+   *
+   * Se for uma requisição local para o próprio servidor,
+   * permitimos.
+   */
+  const isLocalRequest =
+    !origin &&
+    !referer &&
+    LOCAL_HOSTS.has(
+      hostnameFromHeader(requestHost),
+    );
+
+  if (!allowed && !isLocalRequest) {
     return res.status(403).json({
       error: "Origem nao autorizada",
     });
   }
 
-  if (origin && isAllowedHostname(originHost)) {
+  if (
+    origin &&
+    isAllowedHostname(originHost)
+  ) {
     res.setHeader(
       "Access-Control-Allow-Origin",
       origin,
     );
 
-    res.setHeader("Vary", "Origin");
+    res.setHeader(
+      "Vary",
+      "Origin",
+    );
   }
 
   res.setHeader(
@@ -329,15 +566,14 @@ app.use(
   }),
 );
 
-
-/*
- * ============================================================
- * HELPERS
- * ============================================================
- */
+/* ============================================================
+   UTILITÁRIOS
+   ============================================================ */
 
 const toHighRes = (url) => {
-  if (!url) return "";
+  if (!url) {
+    return "";
+  }
 
   return url.replace(
     /\/tiny\//g,
@@ -346,26 +582,38 @@ const toHighRes = (url) => {
 };
 
 const urlToBase64 = async (url) => {
-  if (!url) return "";
+  if (!url) {
+    return "";
+  }
 
   try {
-    const response = await axios.get(url, {
-      responseType: "arraybuffer",
-      timeout: 30000,
-      maxContentLength: 20 * 1024 * 1024,
-      maxBodyLength: 20 * 1024 * 1024,
-    });
+    const response =
+      await axios.get(url, {
+        responseType: "arraybuffer",
+        timeout: 30000,
+        maxContentLength:
+          20 * 1024 * 1024,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36",
+          Accept:
+            "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        },
+      });
 
     const mimeType =
-      response.headers["content-type"] ||
-      "image/png";
+      response.headers[
+        "content-type"
+      ] || "image/png";
 
     return `data:${mimeType};base64,${Buffer.from(
       response.data,
     ).toString("base64")}`;
-  } catch (err) {
-    console.error(
-      `[Image] Erro ao baixar ${url}: ${err.message}`,
+  } catch (error) {
+    console.warn(
+      "[Image] Falha ao baixar:",
+      url,
+      error.message,
     );
 
     return "";
@@ -378,34 +626,40 @@ const getBrasiliaDate = () => {
   return {
     iso: now.toISOString(),
 
-    brasilia: now.toLocaleString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }),
+    brasilia:
+      now.toLocaleString(
+        "pt-BR",
+        {
+          timeZone:
+            "America/Sao_Paulo",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        },
+      ),
   };
 };
 
-
-/*
- * ============================================================
- * TRANSFERMARKT PARSING
- * ============================================================
- */
+/* ============================================================
+   TRANSFERMARKT - PARSER
+   ============================================================ */
 
 const parseLatestTransfersHtml = (
   htmlContent,
   limit = 25,
 ) => {
-  const $ = cheerio.load(htmlContent);
+  const $ = cheerio.load(
+    htmlContent,
+  );
 
   const absoluteUrl = (url) => {
-    if (!url) return "";
+    if (!url) {
+      return "";
+    }
 
     try {
       return new URL(
@@ -441,18 +695,25 @@ const parseLatestTransfersHtml = (
       )
       .first();
 
-    const playerUrl = absoluteUrl(
-      playerLink.attr("href"),
-    );
+    const playerUrl =
+      absoluteUrl(
+        playerLink.attr("href"),
+      );
 
     return {
-      name: cleanText(playerLink.text()),
+      name: cleanText(
+        playerLink.text(),
+      ),
+
       id: playerUrl,
+
       url: playerUrl,
 
       position: cleanText(
         cell
-          .find("table.inline-table tr")
+          .find(
+            "table.inline-table tr",
+          )
           .eq(1)
           .find("td")
           .last()
@@ -495,22 +756,32 @@ const parseLatestTransfersHtml = (
 
     return {
       name:
-        cleanText(selectedClubLink.text()) ||
-        cleanText(clubImg.attr("alt")),
+        cleanText(
+          selectedClubLink.text(),
+        ) ||
+        cleanText(
+          clubImg.attr("alt"),
+        ),
 
       full_name:
         cleanText(
-          selectedClubLink.attr("title"),
+          selectedClubLink.attr(
+            "title",
+          ),
         ) ||
         cleanText(
           clubImg.attr("title"),
         ),
 
       url: absoluteUrl(
-        selectedClubLink.attr("href"),
+        selectedClubLink.attr(
+          "href",
+        ),
       ),
 
-      image_url: imageUrl(clubImg),
+      image_url: imageUrl(
+        clubImg,
+      ),
 
       league: cleanText(
         leagueLink.text(),
@@ -523,10 +794,13 @@ const parseLatestTransfersHtml = (
   };
 
   const parseFee = (cell) => {
-    const feeLink = cell.find("a").first();
+    const feeLink = cell
+      .find("a")
+      .first();
 
     const value = cleanText(
-      feeLink.text() || cell.text(),
+      feeLink.text() ||
+        cell.text(),
     );
 
     return {
@@ -541,21 +815,23 @@ const parseLatestTransfersHtml = (
   return $("table.items > tbody > tr")
     .filter(
       (_, row) =>
-        $(row).children("td").length >= 6,
+        $(row).children("td")
+          .length >= 6,
     )
     .slice(0, limit)
     .map((_, row) => {
-      const cells = $(row).children("td");
+      const cells = $(row).children(
+        "td",
+      );
 
       const nationalities = cells
         .eq(2)
         .find("img")
-        .map(
-          (__, img) =>
-            cleanText(
-              $(img).attr("title") ||
-                $(img).attr("alt"),
-            ),
+        .map((__, img) =>
+          cleanText(
+            $(img).attr("title") ||
+              $(img).attr("alt"),
+          ),
         )
         .get()
         .filter(Boolean);
@@ -587,109 +863,130 @@ const parseLatestTransfersHtml = (
     .get();
 };
 
-
-/*
- * ============================================================
- * TRANSFERMARKT - AXIOS
- * ============================================================
- */
+/* ============================================================
+   TRANSFERMARKT - AXIOS
+   ============================================================ */
 
 const fetchTransfermarktHtmlWithAxios =
   async () => {
-    const response = await axios.get(
-      TRANSFERMARKT_LATEST_TRANSFERS_URL,
-      {
-        timeout: 30000,
+    const response =
+      await axios.get(
+        TRANSFERMARKT_LATEST_TRANSFERS_URL,
+        {
+          timeout: 30000,
 
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
 
-          "Accept-Language":
-            "en-US,en;q=0.9",
+            "Accept-Language":
+              "en-US,en;q=0.9",
 
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
         },
-      },
-    );
+      );
 
     return response.data;
   };
 
-
-/*
- * ============================================================
- * TRANSFERMARKT - PUPPETEER
- * ============================================================
- */
+/* ============================================================
+   TRANSFERMARKT - PUPPETEER
+   ============================================================ */
 
 const fetchTransfermarktHtmlWithPuppeteer =
   async () => {
-    let browser = null;
-    let page = null;
-    let userDataDir = null;
+    return withBrowser(
+      async (page) => {
+        await page.setUserAgent(
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+        );
 
-    try {
-      const result =
-        await getPuppeteerLaunchOptions();
+        await page.setExtraHTTPHeaders(
+          {
+            "accept-language":
+              "en-US,en;q=0.9",
+          },
+        );
 
-      browser = result.browser;
-      page = result.page;
-      userDataDir = result.userDataDir;
+        console.log(
+          "[Transfermarkt] Abrindo página...",
+        );
 
-      await page.setUserAgent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-      );
+        await page.goto(
+          TRANSFERMARKT_LATEST_TRANSFERS_URL,
+          {
+            waitUntil:
+              "domcontentloaded",
+            timeout: 60000,
+          },
+        );
 
-      await page.setExtraHTTPHeaders({
-        "accept-language":
-          "en-US,en;q=0.9",
-      });
+        await page.waitForSelector(
+          "table.items > tbody > tr",
+          {
+            timeout: 60000,
+          },
+        );
 
-      await page.goto(
-        TRANSFERMARKT_LATEST_TRANSFERS_URL,
-        {
-          waitUntil:
-            "domcontentloaded",
+        console.log(
+          "[Transfermarkt] Tabela encontrada.",
+        );
 
-          timeout: 45000,
-        },
-      );
-
-      await page.waitForSelector(
-        "table.items > tbody > tr",
-        {
-          timeout: 30000,
-        },
-      );
-
-      return await page.content();
-    } finally {
-      if (browser) {
-        await browser
-          .close()
-          .catch(() => {});
-      }
-
-      cleanupChromeUserDataDir(
-        userDataDir,
-      );
-    }
+        return await page.content();
+      },
+    );
   };
 
+/* ============================================================
+   SCRAPE
+   ============================================================ */
 
-const scrapeLatestTransfers = async (
-  limit = 25,
-) => {
-  let htmlContent = "";
+const scrapeLatestTransfers =
+  async (limit = 25) => {
+    let htmlContent = "";
 
-  /*
-   * Primeiro tenta Axios.
-   */
-  try {
+    /*
+     * Primeiro tenta Axios.
+     */
+    try {
+      console.log(
+        "[Transfermarkt] Tentando Axios...",
+      );
+
+      htmlContent =
+        await fetchTransfermarktHtmlWithAxios();
+
+      const transfers =
+        parseLatestTransfersHtml(
+          htmlContent,
+          limit,
+        );
+
+      if (transfers.length > 0) {
+        console.log(
+          `[Transfermarkt] ${transfers.length} transferências encontradas via Axios.`,
+        );
+
+        return transfers;
+      }
+
+      console.log(
+        "[Transfermarkt] Axios retornou HTML sem transferências.",
+      );
+    } catch (error) {
+      console.warn(
+        "[Transfermarkt] Axios falhou:",
+        error.message,
+      );
+    }
+
+    /*
+     * Depois tenta Chrome.
+     */
     htmlContent =
-      await fetchTransfermarktHtmlWithAxios();
+      await fetchTransfermarktHtmlWithPuppeteer();
 
     const transfers =
       parseLatestTransfersHtml(
@@ -697,39 +994,20 @@ const scrapeLatestTransfers = async (
         limit,
       );
 
-    if (transfers.length > 0) {
-      return transfers;
-    }
-  } catch (error) {
-    console.warn(
-      `[Transfermarkt] Axios falhou: ${error.message}`,
-    );
-  }
+    return transfers;
+  };
 
-  /*
-   * Se Axios falhar, usa Chrome.
-   */
-  htmlContent =
-    await fetchTransfermarktHtmlWithPuppeteer();
-
-  return parseLatestTransfersHtml(
-    htmlContent,
-    limit,
-  );
-};
-
-
-/*
- * ============================================================
- * MARKET VALUE
- * ============================================================
- */
+/* ============================================================
+   MARKET VALUE
+   ============================================================ */
 
 const formatMarketValue = (
   val,
   lang = "pt",
 ) => {
-  if (!val) return "";
+  if (!val) {
+    return "";
+  }
 
   let num = null;
 
@@ -786,7 +1064,7 @@ const formatMarketValue = (
 
   if (
     num === null ||
-    isNaN(num)
+    Number.isNaN(num)
   ) {
     return val;
   }
@@ -797,7 +1075,8 @@ const formatMarketValue = (
   let suffix = "";
 
   if (num >= 1000000) {
-    const valM = num / 1000000;
+    const valM =
+      num / 1000000;
 
     formattedNum =
       Number.isInteger(valM)
@@ -808,7 +1087,8 @@ const formatMarketValue = (
 
     suffix = "m";
   } else if (num >= 1000) {
-    const valK = num / 1000;
+    const valK =
+      num / 1000;
 
     formattedNum =
       Number.isInteger(valK)
@@ -846,34 +1126,33 @@ const formatMarketValue = (
   return `${formattedNum}${suffix} ${symbol}`;
 };
 
+/* ============================================================
+   MARKET VALUE PARSER
+   ============================================================ */
 
 function parseTransfermarktHtml(
   htmlContent,
   lang = "pt",
 ) {
-  if (!htmlContent) return [];
+  if (!htmlContent) {
+    return [];
+  }
 
-  const $ =
-    cheerio.load(
-      htmlContent,
-    );
+  const $ = cheerio.load(
+    htmlContent,
+  );
 
   const points = [];
 
   $("g.chart-dots image").each(
     (i, el) => {
       const href =
-        $(el).attr(
-          "xlink:href",
-        ) ||
-        $(el).attr(
-          "href",
-        );
+        $(el).attr("xlink:href") ||
+        $(el).attr("href");
 
       if (href) {
         points.push({
-          club_logo_url:
-            href,
+          club_logo_url: href,
         });
       }
     },
@@ -882,122 +1161,116 @@ function parseTransfermarktHtml(
   return points;
 }
 
-
-/*
- * ============================================================
- * RENDER IMAGE WITH CHROME
- * ============================================================
- */
+/* ============================================================
+   RENDER HTML -> PNG
+   ============================================================ */
 
 const renderImageWithPuppeteer =
   async (htmlContent) => {
-    let browser = null;
-    let page = null;
-    let userDataDir = null;
+    return withBrowser(
+      async (page) => {
+        await page.setViewport({
+          width: 1080,
+          height: 1920,
+          deviceScaleFactor: 2,
+        });
 
-    try {
-      const result =
-        await getPuppeteerLaunchOptions();
-
-      browser = result.browser;
-      page = result.page;
-      userDataDir = result.userDataDir;
-
-      await page.setViewport({
-        width: 1080,
-        height: 1920,
-        deviceScaleFactor: 2,
-      });
-
-      await page.setContent(
-        htmlContent,
-        {
-          waitUntil:
-            "networkidle0",
-          timeout: 60000,
-        },
-      );
-
-      return await page.screenshot({
-        type: "png",
-        fullPage: false,
-      });
-    } finally {
-      if (browser) {
-        await browser
-          .close()
-          .catch(() => {});
-      }
-
-      cleanupChromeUserDataDir(
-        userDataDir,
-      );
-    }
-  };
-
-
-/*
- * ============================================================
- * IMAGE -> MP4
- * ============================================================
- */
-
-const convertImageToMp4 = (
-  imageBuffer,
-) =>
-  new Promise(
-    (resolve, reject) => {
-      const requestTmpDir =
-        fs.mkdtempSync(
-          path.join(
-            os.tmpdir(),
-            "transfer-video-",
-          ),
+        await page.setContent(
+          htmlContent,
+          {
+            waitUntil:
+              "networkidle0",
+            timeout: 60000,
+          },
         );
 
-      const imgPath =
-        path.join(
+        /*
+         * Dá alguns ms para fontes/imagens terminarem
+         * de renderizar.
+         */
+        await new Promise(
+          (resolve) =>
+            setTimeout(
+              resolve,
+              1000,
+            ),
+        );
+
+        return await page.screenshot({
+          type: "png",
+        });
+      },
+    );
+  };
+
+/* ============================================================
+   PNG -> MP4
+   ============================================================ */
+
+const convertImageToMp4 =
+  (imageBuffer) =>
+    new Promise(
+      (resolve, reject) => {
+        const requestTmpDir =
+          fs.mkdtempSync(
+            path.join(
+              os.tmpdir(),
+              "transfer-video-",
+            ),
+          );
+
+        const imgPath = path.join(
           requestTmpDir,
           "card.png",
         );
 
-      const videoOutputPath =
-        path.join(
-          requestTmpDir,
-          "video.mp4",
+        const videoOutputPath =
+          path.join(
+            requestTmpDir,
+            "video.mp4",
+          );
+
+        const cleanup = () => {
+          try {
+            fs.rmSync(
+              requestTmpDir,
+              {
+                recursive: true,
+                force: true,
+              },
+            );
+          } catch (error) {
+            console.warn(
+              "[FFmpeg] Cleanup:",
+              error.message,
+            );
+          }
+        };
+
+        try {
+          fs.writeFileSync(
+            imgPath,
+            imageBuffer,
+          );
+        } catch (error) {
+          cleanup();
+          reject(error);
+          return;
+        }
+
+        const duration =
+          VIDEO_DURATION_SECONDS;
+
+        const hasLocalAudio =
+          fs.existsSync(
+            LOCAL_AUDIO_PATH,
+          );
+
+        console.log(
+          "[FFmpeg] Gerando vídeo...",
         );
 
-      const cleanup = () => {
-        fs.rmSync(
-          requestTmpDir,
-          {
-            recursive: true,
-            force: true,
-          },
-        );
-      };
-
-      try {
-        fs.writeFileSync(
-          imgPath,
-          imageBuffer,
-        );
-      } catch (error) {
-        cleanup();
-        reject(error);
-        return;
-      }
-
-      const duration =
-        VIDEO_DURATION_SECONDS;
-
-      const hasLocalAudio =
-        fs.existsSync(
-          LOCAL_AUDIO_PATH,
-        );
-
-      const command =
-        ffmpeg()
+        const command = ffmpeg()
           .input(imgPath)
           .inputOptions([
             "-loop 1",
@@ -1005,87 +1278,130 @@ const convertImageToMp4 = (
             `${duration}`,
           ]);
 
-      if (hasLocalAudio) {
+        if (hasLocalAudio) {
+          command
+            .input(LOCAL_AUDIO_PATH)
+            .inputOptions([
+              "-stream_loop",
+              "-1",
+            ]);
+        }
+
         command
-          .input(
-            LOCAL_AUDIO_PATH,
-          )
-          .inputOptions([
-            "-stream_loop -1",
+          .fps(30)
+          .videoCodec("libx264")
+          .outputOptions([
+            "-preset",
+            "ultrafast",
+
+            "-crf",
+            "26",
+
+            "-pix_fmt",
+            "yuv420p",
+
+            "-vf",
+            "scale=1080:1920:flags=lanczos",
+
+            "-t",
+            `${duration}`,
+
+            "-movflags",
+            "+faststart",
           ]);
-      }
 
-      command
-        .fps(30)
-        .videoCodec("libx264")
-        .outputOptions([
-          "-preset ultrafast",
-          "-crf 26",
-          "-pix_fmt yuv420p",
-          "-vf",
-          "scale=1080:1920:flags=lanczos",
-          "-t",
-          `${duration}`,
-        ]);
+        if (hasLocalAudio) {
+          command
+            .audioCodec("aac")
+            .audioBitrate("128k")
+            .audioFilters(
+              `volume=${AUDIO_VOLUME}`,
+            )
+            .outputOptions([
+              "-shortest",
+            ]);
+        }
 
-      if (hasLocalAudio) {
         command
-          .audioCodec("aac")
-          .audioBitrate("128k")
-          .audioFilters(
-            `volume=${AUDIO_VOLUME}`,
-          );
-      }
+          .output(videoOutputPath)
 
-      command
-        .output(
-          videoOutputPath,
-        )
-        .on("start", (commandLine) => {
-          console.log(
-            `[FFmpeg] ${commandLine}`,
-          );
-        })
-        .on("end", () => {
-          try {
-            const videoBuffer =
-              fs.readFileSync(
-                videoOutputPath,
+          .on(
+            "start",
+            (commandLine) => {
+              console.log(
+                "[FFmpeg] Command:",
+                commandLine,
+              );
+            },
+          )
+
+          .on(
+            "stderr",
+            (stderrLine) => {
+              /*
+               * Não loga tudo para não poluir
+               * o Easypanel.
+               */
+            },
+          )
+
+          .on(
+            "end",
+            () => {
+              try {
+                const videoBuffer =
+                  fs.readFileSync(
+                    videoOutputPath,
+                  );
+
+                console.log(
+                  "[FFmpeg] Vídeo criado.",
+                );
+
+                resolve({
+                  mime_type:
+                    "video/mp4",
+
+                  filename:
+                    "reels.mp4",
+
+                  duration_seconds:
+                    duration,
+
+                  blob:
+                    `data:video/mp4;base64,${videoBuffer.toString(
+                      "base64",
+                    )}`,
+                });
+              } catch (error) {
+                reject(error);
+              } finally {
+                cleanup();
+              }
+            },
+          )
+
+          .on(
+            "error",
+            (err) => {
+              console.error(
+                "[FFmpeg] Erro:",
+                err,
               );
 
-            resolve({
-              mime_type:
-                "video/mp4",
+              cleanup();
 
-              filename:
-                "reels.mp4",
+              reject(err);
+            },
+          )
 
-              duration_seconds:
-                duration,
+          .run();
+      },
+    );
 
-              blob:
-                `data:video/mp4;base64,${videoBuffer.toString("base64")}`,
-            });
-          } catch (error) {
-            reject(error);
-          } finally {
-            cleanup();
-          }
-        })
-        .on("error", (err) => {
-          cleanup();
-          reject(err);
-        })
-        .run();
-    },
-  );
-
-
-/*
- * ============================================================
- * TRANSFER HTML
- * ============================================================
- */
+/* ============================================================
+   HTML - TRANSFER CARD
+   ============================================================ */
 
 const generateTransferHtml = ({
   player_name,
@@ -1104,400 +1420,403 @@ const generateTransferHtml = ({
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="utf-8">
+<meta charset="utf-8">
 
-    <link
-      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&display=swap"
-      rel="stylesheet"
-    >
+<link
+  href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&display=swap"
+  rel="stylesheet"
+>
 
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
+<style>
 
-        body {
-            width: 1080px;
-            height: 1920px;
-            background: #000000;
-            font-family: 'Montserrat', sans-serif;
-            position: relative;
-            overflow: hidden;
-        }
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
-        ${
-          bgB64
-            ? `
-        .background-img {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 1080px;
-            height: 1920px;
-            object-fit: cover;
-            object-position: center top;
-            z-index: 1;
-        }
-        `
-            : ""
-        }
+body {
+  width: 1080px;
+  height: 1920px;
+  background: #000000;
+  font-family: 'Montserrat', sans-serif;
+  position: relative;
+  overflow: hidden;
+}
 
-        .dark-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.45);
-            z-index: 2;
-        }
+${
+  bgB64
+    ? `
+.background-img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1080px;
+  height: 1920px;
+  object-fit: cover;
+  object-position: center top;
+  z-index: 1;
+}
+`
+    : ""
+}
 
-        .shadow-overlay {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            height: 850px;
-            background: linear-gradient(
-                to top,
-                rgba(0,0,0,1) 0%,
-                rgba(0,0,0,0.85) 50%,
-                rgba(0,0,0,0) 100%
-            );
-            z-index: 3;
-        }
+.dark-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 2;
+}
 
-        .watermark-insta {
-            position: absolute;
-            top: 60px;
-            left: 60px;
-            color: rgba(255,255,255,0.45);
-            font-size: 24px;
-            font-weight: 800;
-            letter-spacing: 1.5px;
-            text-shadow: 0 2px 8px rgba(0,0,0,0.8);
-            z-index: 4;
-        }
+.shadow-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 850px;
+  background: linear-gradient(
+    to top,
+    rgba(0,0,0,1) 0%,
+    rgba(0,0,0,0.85) 50%,
+    rgba(0,0,0,0) 100%
+  );
+  z-index: 3;
+}
 
-        ${
-          logoB64
-            ? `
-        .brand-logo-container {
-            position: absolute;
-            top: 60px;
-            left: 0;
-            width: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 4;
-        }
+.watermark-insta {
+  position: absolute;
+  top: 60px;
+  left: 60px;
+  color: rgba(255,255,255,0.45);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+  z-index: 4;
+}
 
-        .logo-bg-wrapper {
-            background-color: #FFFFFF;
-            border-radius: 6px;
-            padding: 1px;
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-        }
+${
+  logoB64
+    ? `
+.brand-logo-container {
+  position: absolute;
+  top: 60px;
+  left: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 4;
+}
 
-        .brand-logo {
-            max-width: 320px;
-            max-height: 115px;
-            object-fit: contain;
-            display: block;
-        }
-        `
-            : ""
-        }
+.logo-bg-wrapper {
+  background-color: #FFFFFF;
+  border-radius: 6px;
+  padding: 1px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
 
-        .info-wrapper {
-            position: absolute;
-            bottom: 340px;
-            left: 0;
-            width: 100%;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 20px;
-            z-index: 4;
-        }
+.brand-logo {
+  max-width: 320px;
+  max-height: 115px;
+  object-fit: contain;
+  display: block;
+}
+`
+    : ""
+}
 
-        .season-tag {
-            background: rgba(0,0,0,0.7);
-            border: 1px solid rgba(63,158,64,0.5);
-            color: #3F9E40;
-            padding: 10px 30px;
-            border-radius: 24px;
-            text-align: center;
-        }
+.info-wrapper {
+  position: absolute;
+  bottom: 340px;
+  left: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  z-index: 4;
+}
 
-        .season-main {
-            font-size: 28px;
-            font-weight: 800;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-        }
+.season-tag {
+  background: rgba(0,0,0,0.7);
+  border: 1px solid rgba(63,158,64,0.5);
+  color: #3F9E40;
+  padding: 10px 30px;
+  border-radius: 24px;
+  text-align: center;
+}
 
-        .season-sub {
-            font-size: 14px;
-            font-weight: 700;
-            color: #A0A0A0;
-            letter-spacing: 1px;
-            margin-top: 2px;
-        }
+.season-main {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
 
-        .financial-info {
-            display: flex;
-            justify-content: center;
-            gap: 30px;
-        }
+.season-sub {
+  font-size: 14px;
+  font-weight: 700;
+  color: #A0A0A0;
+  letter-spacing: 1px;
+  margin-top: 2px;
+}
 
-        .info-card {
-            background: rgba(18,18,18,0.85);
-            border: 1px solid rgba(255,255,255,0.15);
-            backdrop-filter: blur(15px);
-            padding: 20px 34px;
-            border-radius: 16px;
-            text-align: center;
-            min-width: 310px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-        }
+.financial-info {
+  display: flex;
+  justify-content: center;
+  gap: 30px;
+}
 
-        .info-card.highlight {
-            border-color: #3F9E40;
-            background: rgba(63,158,64,0.1);
-        }
+.info-card {
+  background: rgba(18,18,18,0.85);
+  border: 1px solid rgba(255,255,255,0.15);
+  backdrop-filter: blur(15px);
+  padding: 20px 34px;
+  border-radius: 16px;
+  text-align: center;
+  min-width: 310px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
 
-        .info-label {
-            color: #FFFFFF;
-            font-size: 18px;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 1.2px;
-        }
+.info-card.highlight {
+  border-color: #3F9E40;
+  background: rgba(63,158,64,0.1);
+}
 
-        .info-sublabel {
-            color: #A0A0A0;
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-top: 2px;
-            margin-bottom: 6px;
-        }
+.info-label {
+  color: #FFFFFF;
+  font-size: 18px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+}
 
-        .info-value {
-            color: #FFFFFF;
-            font-size: 48px;
-            font-weight: 900;
-        }
+.info-sublabel {
+  color: #A0A0A0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 2px;
+  margin-bottom: 6px;
+}
 
-        .info-card.highlight .info-value {
-            color: #3F9E40;
-        }
+.info-value {
+  color: #FFFFFF;
+  font-size: 48px;
+  font-weight: 900;
+}
 
-        .transfer-row {
-            position: absolute;
-            bottom: 160px;
-            left: 0;
-            width: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 40px;
-            z-index: 4;
-        }
+.info-card.highlight .info-value {
+  color: #3F9E40;
+}
 
-        .badge {
-            width: 170px;
-            height: 170px;
-            object-fit: contain;
-            image-rendering: -webkit-optimize-contrast;
-            filter: drop-shadow(0 10px 20px rgba(0,0,0,0.8));
-        }
+.transfer-row {
+  position: absolute;
+  bottom: 160px;
+  left: 0;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 40px;
+  z-index: 4;
+}
 
-        .handshake-icon {
-            width: 92px;
-            height: 92px;
-            object-fit: contain;
-            filter: drop-shadow(0 0 20px rgba(63,158,64,0.8));
-        }
+.badge {
+  width: 170px;
+  height: 170px;
+  object-fit: contain;
+  image-rendering: -webkit-optimize-contrast;
+  filter: drop-shadow(
+    0 10px 20px rgba(0,0,0,0.8)
+  );
+}
 
-        .name-banner {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            background: #000000;
-            border-top: 5px solid #3F9E40;
-            padding: 34px 42px;
-            text-align: center;
-            z-index: 4;
-        }
+.handshake-icon {
+  width: 92px;
+  height: 92px;
+  object-fit: contain;
+  filter: drop-shadow(
+    0 0 20px rgba(63,158,64,0.8)
+  );
+}
 
-        .player-name {
-            color: #FFFFFF;
-            font-size: 58px;
-            font-weight: 900;
-            letter-spacing: 2px;
-            line-height: 1.05;
-            text-transform: uppercase;
-            overflow-wrap: break-word;
-        }
-    </style>
+.name-banner {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: #000000;
+  border-top: 5px solid #3F9E40;
+  padding: 34px 42px;
+  text-align: center;
+  z-index: 4;
+}
+
+.player-name {
+  color: #FFFFFF;
+  font-size: 58px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  line-height: 1.05;
+  text-transform: uppercase;
+  overflow-wrap: break-word;
+}
+
+</style>
 </head>
 
 <body>
 
-    ${
-      bgB64
-        ? `<img class="background-img" src="${bgB64}" />`
-        : ""
-    }
+${
+  bgB64
+    ? `<img class="background-img" src="${bgB64}" />`
+    : ""
+}
 
-    <div class="dark-overlay"></div>
+<div class="dark-overlay"></div>
 
-    <div class="shadow-overlay"></div>
+<div class="shadow-overlay"></div>
 
-    <div class="watermark-insta">
-        ${instagram_handle || ""}
-    </div>
+<div class="watermark-insta">
+  ${instagram_handle || ""}
+</div>
 
-    ${
-      logoB64
-        ? `
-    <div class="brand-logo-container">
-        <div class="logo-bg-wrapper">
-            <img
-                class="brand-logo"
-                src="${logoB64}"
-            />
-        </div>
-    </div>
-    `
-        : ""
-    }
+${
+  logoB64
+    ? `
+<div class="brand-logo-container">
+  <div class="logo-bg-wrapper">
+    <img
+      class="brand-logo"
+      src="${logoB64}"
+    />
+  </div>
+</div>
+`
+    : ""
+}
 
-    <div class="info-wrapper">
+<div class="info-wrapper">
 
-        ${
-          season
-            ? `
-        <div class="season-tag">
-            <div class="season-main">
-                SEASON ${season}
-            </div>
+${
+  season
+    ? `
+<div class="season-tag">
+  <div class="season-main">
+    SEASON ${season}
+  </div>
 
-            <div class="season-sub">
-                TEMPORADA
-            </div>
-        </div>
-        `
-            : ""
-        }
+  <div class="season-sub">
+    TEMPORADA
+  </div>
+</div>
+`
+    : ""
+}
 
-        ${
-          market_value_then || fee
-            ? `
-        <div class="financial-info">
+${
+  market_value_then || fee
+    ? `
+<div class="financial-info">
 
-            ${
-              market_value_then
-                ? `
-            <div class="info-card">
+${
+  market_value_then
+    ? `
+<div class="info-card">
 
-                <div class="info-label">
-                    MARKET VALUE
-                </div>
+  <div class="info-label">
+    MARKET VALUE
+  </div>
 
-                <div class="info-sublabel">
-                    VALOR DE MERCADO
-                </div>
+  <div class="info-sublabel">
+    VALOR DE MERCADO
+  </div>
 
-                <div class="info-value">
-                    ${market_value_then}
-                </div>
+  <div class="info-value">
+    ${market_value_then}
+  </div>
 
-            </div>
-            `
-                : ""
-            }
+</div>
+`
+    : ""
+}
 
-            ${
-              fee
-                ? `
-            <div class="info-card highlight">
+${
+  fee
+    ? `
+<div class="info-card highlight">
 
-                <div class="info-label">
-                    TRANSFER FEE
-                </div>
+  <div class="info-label">
+    TRANSFER FEE
+  </div>
 
-                <div class="info-sublabel">
-                    VALOR DA COMPRA / FICHAJE
-                </div>
+  <div class="info-sublabel">
+    VALOR DA COMPRA / FICHAJE
+  </div>
 
-                <div class="info-value">
-                    ${fee}
-                </div>
+  <div class="info-value">
+    ${fee}
+  </div>
 
-            </div>
-            `
-                : ""
-            }
+</div>
+`
+    : ""
+}
 
-        </div>
-        `
-            : ""
-        }
+</div>
+`
+    : ""
+}
 
-    </div>
+</div>
 
-    <div class="transfer-row">
+<div class="transfer-row">
 
-        ${
-          fromB64
-            ? `<img class="badge" src="${fromB64}" />`
-            : ""
-        }
+${
+  fromB64
+    ? `<img class="badge" src="${fromB64}" />`
+    : ""
+}
 
-        ${
-          handshakeB64
-            ? `<img class="handshake-icon" src="${handshakeB64}" />`
-            : ""
-        }
+${
+  handshakeB64
+    ? `<img class="handshake-icon" src="${handshakeB64}" />`
+    : ""
+}
 
-        ${
-          toB64
-            ? `<img class="badge" src="${toB64}" />`
-            : ""
-        }
+${
+  toB64
+    ? `<img class="badge" src="${toB64}" />`
+    : ""
+}
 
-    </div>
+</div>
 
-    <div class="name-banner">
+<div class="name-banner">
 
-        <div class="player-name">
-            ${player_name || ""}
-            ${player_age ? `(${player_age})` : ""}
-        </div>
+<div class="player-name">
+  ${player_name || ""}
+  ${player_age ? `(${player_age})` : ""}
+</div>
 
-    </div>
+</div>
 
 </body>
 </html>
 `;
 
-
-/*
- * ============================================================
- * MARKET VALUE HTML
- * ============================================================
- */
+/* ============================================================
+   HTML - MARKET VALUE
+   ============================================================ */
 
 const generateMarketValueHtml = ({
   player_name,
@@ -1508,333 +1827,373 @@ const generateMarketValueHtml = ({
   lang = "pt",
 }) => `
 <!DOCTYPE html>
-
 <html>
-
 <head>
 
-    <meta charset="utf-8">
+<meta charset="utf-8">
 
-    <link
-        href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&display=swap"
-        rel="stylesheet"
-    >
+<link
+  href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800;900&display=swap"
+  rel="stylesheet"
+>
 
-    <style>
+<style>
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
-        body {
-            width: 1080px;
-            height: 1920px;
-            background: #000000;
-            font-family: 'Montserrat', sans-serif;
-            position: relative;
-            overflow: hidden;
-        }
+body {
+  width: 1080px;
+  height: 1920px;
+  background: #000000;
+  font-family: 'Montserrat', sans-serif;
+  position: relative;
+  overflow: hidden;
+}
 
-        ${
-          bgB64
-            ? `
-        .background-img {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 1080px;
-            height: 1920px;
-            object-fit: cover;
-            object-position: center top;
-            z-index: 1;
-        }
-        `
-            : ""
-        }
+${
+  bgB64
+    ? `
+.background-img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1080px;
+  height: 1920px;
+  object-fit: cover;
+  object-position: center top;
+  z-index: 1;
+}
+`
+    : ""
+}
 
-        .dark-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.45);
-            z-index: 2;
-        }
+.dark-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.45);
+  z-index: 2;
+}
 
-        .shadow-overlay {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            height: 1200px;
+.shadow-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 1200px;
 
-            background: linear-gradient(
-                to top,
-                rgba(0,0,0,1) 0%,
-                rgba(0,0,0,0.95) 40%,
-                rgba(0,0,0,0.7) 70%,
-                rgba(0,0,0,0) 100%
-            );
+  background: linear-gradient(
+    to top,
+    rgba(0,0,0,1) 0%,
+    rgba(0,0,0,0.95) 40%,
+    rgba(0,0,0,0.7) 70%,
+    rgba(0,0,0,0) 100%
+  );
 
-            z-index: 3;
-        }
+  z-index: 3;
+}
 
-        .watermark-insta {
-            position: absolute;
-            top: 60px;
-            left: 60px;
-            color: rgba(255,255,255,0.45);
-            font-size: 24px;
-            font-weight: 800;
-            letter-spacing: 1.5px;
-            text-shadow: 0 2px 8px rgba(0,0,0,0.8);
-            z-index: 4;
-        }
+.watermark-insta {
+  position: absolute;
+  top: 60px;
+  left: 60px;
+  color: rgba(255,255,255,0.45);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+  z-index: 4;
+}
 
-        ${
-          logoB64
-            ? `
-        .brand-logo-container {
-            position: absolute;
-            top: 60px;
-            right: 60px;
-            z-index: 4;
-        }
+${
+  logoB64
+    ? `
+.brand-logo-container {
+  position: absolute;
+  top: 60px;
+  right: 60px;
+  z-index: 4;
+}
 
-        .logo-bg-wrapper {
-            background-color: #FFFFFF;
-            border-radius: 6px;
-            padding: 1px;
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-        }
+.logo-bg-wrapper {
+  background-color: #FFFFFF;
+  border-radius: 6px;
+  padding: 1px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
 
-        .brand-logo {
-            max-width: 250px;
-            max-height: 92px;
-            object-fit: contain;
-            display: block;
-        }
-        `
-            : ""
-        }
+.brand-logo {
+  max-width: 250px;
+  max-height: 92px;
+  object-fit: contain;
+  display: block;
+}
+`
+    : ""
+}
 
-        .timeline-container {
-            position: absolute;
-            bottom: 80px;
-            left: 0;
-            width: 100%;
-            padding: 0 40px;
+.timeline-container {
+  position: absolute;
+  bottom: 80px;
+  left: 0;
+  width: 100%;
+  padding: 0 40px;
 
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-end;
 
-            gap: 34px 20px;
+  gap: 34px 20px;
 
-            z-index: 4;
+  z-index: 4;
 
-            max-height: 1300px;
-        }
+  max-height: 1300px;
+}
 
-        .timeline-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 14px;
-            width: calc(33.33% - 20px);
-        }
+.timeline-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: calc(33.33% - 20px);
+}
 
-        .value-tag {
-            background: #FFFFFF;
-            color: #000000;
-            font-size: 30px;
-            font-weight: 900;
-            padding: 8px 18px;
-            border-radius: 6px;
-            box-shadow: 0 6px 20px rgba(0,0,0,0.7);
-            white-space: nowrap;
-            text-transform: lowercase;
-            letter-spacing: 0.5px;
-        }
+.value-tag {
+  background: #FFFFFF;
+  color: #000000;
+  font-size: 30px;
+  font-weight: 900;
+  padding: 8px 18px;
+  border-radius: 6px;
 
-        .club-badge {
-            width: 140px;
-            height: 140px;
-            object-fit: contain;
-            filter: drop-shadow(0 10px 20px rgba(0,0,0,0.85));
-        }
+  box-shadow:
+    0 6px 20px rgba(0,0,0,0.7);
 
-        .year-label {
-            color: #FFFFFF;
-            font-size: 38px;
-            font-weight: 900;
-            letter-spacing: 1px;
-            text-shadow: 0 4px 10px rgba(0,0,0,0.9);
-        }
+  white-space: nowrap;
+  text-transform: lowercase;
+  letter-spacing: 0.5px;
+}
 
-        .player-header {
-            position: absolute;
-            top: 160px;
-            left: 0;
-            width: 100%;
-            text-align: center;
-            z-index: 4;
-        }
+.club-badge {
+  width: 140px;
+  height: 140px;
+  object-fit: contain;
 
-        .player-title {
-            color: #FFFFFF;
-            font-size: 64px;
-            font-weight: 900;
-            letter-spacing: 3px;
-            line-height: 1.05;
-            text-transform: uppercase;
-            text-shadow: 0 4px 20px rgba(0,0,0,0.9);
-            overflow-wrap: break-word;
-            padding: 0 46px;
-        }
+  filter:
+    drop-shadow(
+      0 10px 20px rgba(0,0,0,0.85)
+    );
+}
 
-        .subtitle-main {
-            color: #3F9E40;
-            font-size: 28px;
-            font-weight: 900;
-            letter-spacing: 3px;
-            text-transform: uppercase;
-            margin-top: 6px;
-        }
+.year-label {
+  color: #FFFFFF;
+  font-size: 38px;
+  font-weight: 900;
+  letter-spacing: 1px;
 
-        .subtitle-sub {
-            color: #A0A0A0;
-            font-size: 16px;
-            font-weight: 700;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-            margin-top: 3px;
-        }
+  text-shadow:
+    0 4px 10px rgba(0,0,0,0.9);
+}
 
-    </style>
+.player-header {
+  position: absolute;
+  top: 160px;
+  left: 0;
+  width: 100%;
+  text-align: center;
+  z-index: 4;
+}
 
+.player-title {
+  color: #FFFFFF;
+  font-size: 64px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  line-height: 1.05;
+  text-transform: uppercase;
+
+  text-shadow:
+    0 4px 20px rgba(0,0,0,0.9);
+
+  overflow-wrap: break-word;
+
+  padding: 0 46px;
+}
+
+.subtitle-main {
+  color: #3F9E40;
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
+.subtitle-sub {
+  color: #A0A0A0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+
+</style>
 </head>
 
 <body>
 
-    ${
-      bgB64
-        ? `<img class="background-img" src="${bgB64}" />`
-        : ""
-    }
+${
+  bgB64
+    ? `<img class="background-img" src="${bgB64}" />`
+    : ""
+}
 
-    <div class="dark-overlay"></div>
+<div class="dark-overlay"></div>
 
-    <div class="shadow-overlay"></div>
+<div class="shadow-overlay"></div>
 
-    <div class="watermark-insta">
-        ${instagram_handle || ""}
-    </div>
+<div class="watermark-insta">
+  ${instagram_handle || ""}
+</div>
 
-    ${
-      logoB64
-        ? `
-    <div class="brand-logo-container">
+${
+  logoB64
+    ? `
+<div class="brand-logo-container">
 
-        <div class="logo-bg-wrapper">
+  <div class="logo-bg-wrapper">
 
-            <img
-                class="brand-logo"
-                src="${logoB64}"
-            />
+    <img
+      class="brand-logo"
+      src="${logoB64}"
+    />
 
-        </div>
+  </div>
 
-    </div>
-    `
-        : ""
-    }
+</div>
+`
+    : ""
+}
 
-    ${
-      player_name
-        ? `
-    <div class="player-header">
+${
+  player_name
+    ? `
+<div class="player-header">
 
-        <div class="player-title">
-            ${player_name}
-        </div>
+  <div class="player-title">
+    ${player_name}
+  </div>
 
-        <div class="subtitle-main">
-            MARKET VALUE EVOLUTION
-        </div>
+  <div class="subtitle-main">
+    MARKET VALUE EVOLUTION
+  </div>
 
-        <div class="subtitle-sub">
-            EVOLUÇÃO DO VALOR DE MERCADO / EVOLUCIÓN DEL VALOR DE MERCADO
-        </div>
+  <div class="subtitle-sub">
+    EVOLUÇÃO DO VALOR DE MERCADO /
+    EVOLUCIÓN DEL VALOR DE MERCADO
+  </div>
 
-    </div>
-    `
-        : ""
-    }
+</div>
+`
+    : ""
+}
 
-    <div class="timeline-container">
+<div class="timeline-container">
 
-        ${historyWithB64
-          .map(
-            (item) => `
-            <div class="timeline-item">
+${
+  historyWithB64
+    .map(
+      (item) => `
+<div class="timeline-item">
 
-                ${
-                  item.formatted_value
-                    ? `
-                    <div class="value-tag">
-                        ${item.formatted_value}
-                    </div>
-                    `
-                    : ""
-                }
+${
+  item.formatted_value
+    ? `
+<div class="value-tag">
+  ${item.formatted_value}
+</div>
+`
+    : ""
+}
 
-                ${
-                  item.club_logo_b64
-                    ? `
-                    <img
-                        class="club-badge"
-                        src="${item.club_logo_b64}"
-                    />
-                    `
-                    : ""
-                }
+${
+  item.club_logo_b64
+    ? `
+<img
+  class="club-badge"
+  src="${item.club_logo_b64}"
+/>
+`
+    : ""
+}
 
-                ${
-                  item.year
-                    ? `
-                    <div class="year-label">
-                        ${item.year}
-                    </div>
-                    `
-                    : ""
-                }
+${
+  item.year
+    ? `
+<div class="year-label">
+  ${item.year}
+</div>
+`
+    : ""
+}
 
-            </div>
-        `,
-          )
-          .join("")}
+</div>
+`,
+    )
+    .join("")
+}
 
-    </div>
+</div>
 
 </body>
-
 </html>
 `;
 
+/* ============================================================
+   ROUTE: HEALTH
+   ============================================================ */
 
-/*
- * ============================================================
- * ENDPOINT - SCRAPE TRANSFERMARKT
- * ============================================================
- */
+app.get(
+  "/",
+  (req, res) => {
+    res.json({
+      ok: true,
+      service:
+        "fut-ffmpeg",
+      chrome:
+        CHROME_EXECUTABLE || null,
+      port: PORT,
+      timestamp:
+        new Date().toISOString(),
+    });
+  },
+);
+
+app.get(
+  "/health",
+  (req, res) => {
+    res.json({
+      ok: true,
+      chrome:
+        CHROME_EXECUTABLE || null,
+    });
+  },
+);
+
+/* ============================================================
+   ROUTE: SCRAPE TRANSFERMARKT
+   ============================================================ */
 
 app.get(
   "/api/scrape-transfermarkt-transfers",
@@ -1843,6 +2202,7 @@ app.get(
       const limitInput =
         parseInt(
           req.query.limit,
+          10,
         );
 
       const limit =
@@ -1892,7 +2252,7 @@ app.get(
       });
     } catch (error) {
       console.error(
-        "[Transfermarkt]",
+        "[Scrape] Erro:",
         error,
       );
 
@@ -1902,17 +2262,20 @@ app.get(
 
         details:
           error.message,
+
+        stack:
+          process.env.NODE_ENV ===
+          "production"
+            ? undefined
+            : error.stack,
       });
     }
   },
 );
 
-
-/*
- * ============================================================
- * ENDPOINT - TRANSFER CARD
- * ============================================================
- */
+/* ============================================================
+   ROUTE: GENERATE TRANSFER CARD
+   ============================================================ */
 
 app.post(
   "/api/generate-transfer-card",
@@ -1924,8 +2287,10 @@ app.post(
         season,
         market_value_then,
         fee,
+
         background_image_url,
         player_image_url,
+
         from_team_url,
         to_team_url,
 
@@ -1937,6 +2302,10 @@ app.post(
         instagram_handle =
           "@futebolnatv.info",
       } = req.body;
+
+      console.log(
+        "[Transfer Card] Iniciando geração...",
+      );
 
       const [
         bgB64,
@@ -1981,6 +2350,14 @@ app.post(
         ),
       ]);
 
+      /*
+       * playerB64 continua sendo baixado para manter
+       * compatibilidade com o payload atual.
+       *
+       * A arte atual não utiliza a imagem do jogador.
+       */
+      void playerB64;
+
       const htmlContent =
         generateTransferHtml({
           player_name,
@@ -1988,46 +2365,63 @@ app.post(
           season,
           market_value_then,
           fee,
+
           bgB64,
           playerB64,
+
           fromB64,
           toB64,
           handshakeB64,
           logoB64,
+
           instagram_handle,
         });
+
+      console.log(
+        "[Transfer Card] Renderizando PNG...",
+      );
 
       const imageBuffer =
         await renderImageWithPuppeteer(
           htmlContent,
         );
 
+      console.log(
+        "[Transfer Card] Convertendo para MP4...",
+      );
+
       const video =
         await convertImageToMp4(
           imageBuffer,
         );
 
-      return res.json(video);
+      console.log(
+        "[Transfer Card] Finalizado.",
+      );
+
+      return res.json(
+        video,
+      );
     } catch (error) {
       console.error(
-        "[Transfer Card]",
+        "[Transfer Card] Error:",
         error,
       );
 
       return res.status(500).json({
         error:
           error.message,
+
+        details:
+          error.stack,
       });
     }
   },
 );
 
-
-/*
- * ============================================================
- * ENDPOINT - MARKET VALUE CARD
- * ============================================================
- */
+/* ============================================================
+   ROUTE: GENERATE MARKET VALUE CARD
+   ============================================================ */
 
 app.post(
   "/api/generate-market-value-card",
@@ -2051,10 +2445,18 @@ app.post(
         history = [],
       } = req.body;
 
+      console.log(
+        "[Market Value] Iniciando geração...",
+      );
+
       let marketHistory = [
         ...history,
       ];
 
+      /*
+       * Se não vier history mas vier HTML,
+       * tenta extrair os clubes.
+       */
       if (
         transfermarkt_html &&
         marketHistory.length === 0
@@ -2082,17 +2484,24 @@ app.post(
           );
       }
 
+      /*
+       * Ordena por ano.
+       */
       marketHistory.sort(
         (a, b) => {
           const yearA =
-            parseInt(a.year) || 0;
+            parseInt(
+              a.year,
+              10,
+            ) || 0;
 
           const yearB =
-            parseInt(b.year) || 0;
+            parseInt(
+              b.year,
+              10,
+            ) || 0;
 
-          return (
-            yearA - yearB
-          );
+          return yearA - yearB;
         },
       );
 
@@ -2132,65 +2541,118 @@ app.post(
       const htmlContent =
         generateMarketValueHtml({
           player_name,
+
           bgB64,
+
           logoB64,
+
           instagram_handle,
+
           historyWithB64,
+
           lang,
         });
+
+      console.log(
+        "[Market Value] Renderizando PNG...",
+      );
 
       const imageBuffer =
         await renderImageWithPuppeteer(
           htmlContent,
         );
 
+      console.log(
+        "[Market Value] Convertendo para MP4...",
+      );
+
       const video =
         await convertImageToMp4(
           imageBuffer,
         );
 
-      return res.json(video);
+      console.log(
+        "[Market Value] Finalizado.",
+      );
+
+      return res.json(
+        video,
+      );
     } catch (error) {
       console.error(
-        "[Market Value Card]",
+        "[Market Value] Error:",
         error,
       );
 
       return res.status(500).json({
         error:
           error.message,
+
+        details:
+          error.stack,
       });
     }
   },
 );
 
+/* ============================================================
+   ERROR HANDLER
+   ============================================================ */
 
-/*
- * ============================================================
- * SERVER
- * ============================================================
- */
+app.use(
+  (
+    error,
+    req,
+    res,
+    next,
+  ) => {
+    console.error(
+      "[Express] Erro não tratado:",
+      error,
+    );
 
-const PORT =
-  process.env.PORT || 3000;
+    if (res.headersSent) {
+      return next(error);
+    }
+
+    return res.status(500).json({
+      error:
+        error.message ||
+        "Internal server error",
+    });
+  },
+);
+
+/* ============================================================
+   START SERVER
+   ============================================================ */
 
 app.listen(
   PORT,
+  "0.0.0.0",
   () => {
+    console.log("");
     console.log(
-      `http://localhost:${PORT}`,
+      "==========================================",
     );
-
     console.log(
-      `[Server] Porta: ${PORT}`,
+      " FUT-FFMPEG SERVER",
     );
-
     console.log(
-      `[Server] Node: ${process.version}`,
+      "==========================================",
     );
-
     console.log(
-      `[Server] Platform: ${process.platform}`,
+      `Porta: ${PORT}`,
     );
+    console.log(
+      `URL interna: http://0.0.0.0:${PORT}`,
+    );
+    console.log(
+      `Chrome: ${CHROME_EXECUTABLE || "NÃO ENCONTRADO"}`,
+    );
+    console.log(
+      "==========================================",
+    );
+    console.log("");
   },
 );
