@@ -207,13 +207,14 @@ const fetchTransfermarktHtmlWithAxios = async () => {
 };
 
 const fetchTransfermarktHtmlWithPuppeteer = async () => {
-    let browser;
-    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transfer-scrape-browser-'));
-
     try {
-        browser = await puppeteer.launch(getPuppeteerLaunchOptions(profileDir));
+        const { browser, page } = await connect({
+            headless: 'new',
+            args: PUPPETEER_ARGS,
+            turnstile: true,
+            disableXvfb: true
+        });
 
-        const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
         await page.setExtraHTTPHeaders({ 'accept-language': 'en-US,en;q=0.9' });
         await page.goto(TRANSFERMARKT_LATEST_TRANSFERS_URL, {
@@ -222,12 +223,11 @@ const fetchTransfermarktHtmlWithPuppeteer = async () => {
         });
         await page.waitForSelector('table.items > tbody > tr', { timeout: 30000 });
 
-        return await page.content();
-    } finally {
-        if (browser) {
-            await browser.close().catch(() => {});
-        }
-        fs.rmSync(profileDir, { recursive: true, force: true });
+        const content = await page.content();
+        await browser.close().catch(() => {});
+        return content;
+    } catch (error) {
+        throw error;
     }
 };
 
@@ -312,21 +312,22 @@ function parseTransfermarktHtml(htmlContent, lang = 'pt') {
 }
 
 const renderImageWithPuppeteer = async (htmlContent) => {
-    let browser;
-    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'transfer-render-browser-'));
-
     try {
-        browser = await puppeteer.launch(getPuppeteerLaunchOptions(profileDir));
-        const page = await browser.newPage();
+        const { browser, page } = await connect({
+            headless: 'new',
+            args: PUPPETEER_ARGS,
+            turnstile: true,
+            disableXvfb: true
+        });
+
         await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 2 });
         await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
 
-        return await page.screenshot({ type: 'png' });
-    } finally {
-        if (browser) {
-            await browser.close().catch(() => {});
-        }
-        fs.rmSync(profileDir, { recursive: true, force: true });
+        const screenshot = await page.screenshot({ type: 'png' });
+        await browser.close().catch(() => {});
+        return screenshot;
+    } catch (error) {
+        throw error;
     }
 };
 
