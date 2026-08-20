@@ -227,8 +227,81 @@ const findChromeExecutable = () => {
   );
 };
 
+const findChromeHeadlessShellExecutable = () => {
+  const puppeteerCache =
+    process.env.PUPPETEER_CACHE_DIR ||
+    path.join(
+      os.homedir(),
+      ".cache",
+      "puppeteer",
+    );
+
+  const shellCacheDir = path.join(
+    puppeteerCache,
+    "chrome-headless-shell",
+  );
+
+  if (!fs.existsSync(shellCacheDir)) {
+    return null;
+  }
+
+  const versions = fs
+    .readdirSync(shellCacheDir, {
+      withFileTypes: true,
+    })
+    .filter(
+      (entry) =>
+        entry.isDirectory(),
+    )
+    .map(
+      (entry) => entry.name,
+    )
+    .sort()
+    .reverse();
+
+  for (const version of versions) {
+    const versionDir = path.join(
+      shellCacheDir,
+      version,
+    );
+
+    const possibleExecutables = [
+      path.join(
+        versionDir,
+        "chrome-headless-shell-linux64",
+        "chrome-headless-shell",
+      ),
+
+      path.join(
+        versionDir,
+        "chrome-headless-shell-linux",
+        "chrome-headless-shell",
+      ),
+
+      path.join(
+        versionDir,
+        "chrome-headless-shell",
+      ),
+    ];
+
+    for (const executable of possibleExecutables) {
+      if (
+        fs.existsSync(executable) &&
+        fs.statSync(executable).isFile()
+      ) {
+        return executable;
+      }
+    }
+  }
+
+  return null;
+};
+
 const CHROME_EXECUTABLE =
   findChromeExecutable();
+
+const CHROME_HEADLESS_SHELL_EXECUTABLE =
+  findChromeHeadlessShellExecutable();
 
 console.log("");
 console.log(
@@ -251,6 +324,11 @@ console.log(
 console.log(
   "Chrome:",
   CHROME_EXECUTABLE ||
+    "NOT FOUND",
+);
+console.log(
+  "Chrome Headless Shell:",
+  CHROME_HEADLESS_SHELL_EXECUTABLE ||
     "NOT FOUND",
 );
 console.log(
@@ -348,9 +426,19 @@ const launchBrowser = async () => {
     hasLinuxDisplay() ||
     hasXvfb();
 
-  const headless =
+  const needsHeadlessRuntime =
     process.platform === "linux" &&
-    !canUseRealBrowser
+    !canUseRealBrowser;
+
+  const executable =
+    needsHeadlessRuntime &&
+    CHROME_HEADLESS_SHELL_EXECUTABLE
+      ? CHROME_HEADLESS_SHELL_EXECUTABLE
+      : CHROME_EXECUTABLE;
+
+  const headless =
+    needsHeadlessRuntime &&
+    !CHROME_HEADLESS_SHELL_EXECUTABLE
       ? "new"
       : false;
 
@@ -358,6 +446,20 @@ const launchBrowser = async () => {
     process.platform !== "linux" ||
     !hasXvfb();
 
+  const args =
+    needsHeadlessRuntime
+      ? [
+          ...PUPPETEER_ARGS,
+          "--disable-gpu",
+          "--no-zygote",
+          "--single-process",
+        ]
+      : PUPPETEER_ARGS;
+
+  console.log(
+    "[Chrome] Executavel efetivo:",
+    executable,
+  );
   console.log(
     "[Chrome] Headless:",
     headless,
@@ -379,14 +481,17 @@ const launchBrowser = async () => {
         headless,
 
       args:
-        PUPPETEER_ARGS,
+        args,
 
       customConfig: {
         chromePath:
-          CHROME_EXECUTABLE,
+          executable,
 
         userDataDir:
           userDataDir,
+
+        logLevel:
+          "info",
       },
 
       turnstile:
@@ -449,6 +554,28 @@ const launchBrowser = async () => {
       "[Chrome] Erro:",
       error,
     );
+
+    const chromeErrorLogPath = path.join(
+      userDataDir,
+      "chrome-err.log",
+    );
+
+    if (fs.existsSync(chromeErrorLogPath)) {
+      try {
+        console.error(
+          "[Chrome] chrome-err.log:",
+          fs.readFileSync(
+            chromeErrorLogPath,
+            "utf8",
+          ),
+        );
+      } catch (logError) {
+        console.warn(
+          "[Chrome] Erro ao ler chrome-err.log:",
+          logError.message,
+        );
+      }
+    }
 
     try {
       fs.rmSync(
