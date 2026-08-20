@@ -283,6 +283,30 @@ const PUPPETEER_ARGS = [
   "--disable-dev-shm-usage",
 ];
 
+const hasLinuxDisplay = () => {
+  if (process.platform !== "linux") {
+    return true;
+  }
+
+  return Boolean(
+    process.env.DISPLAY,
+  );
+};
+
+const hasXvfb = () => {
+  if (process.platform !== "linux") {
+    return false;
+  }
+
+  return [
+    "/usr/bin/Xvfb",
+    "/usr/bin/xvfb-run",
+  ].some(
+    (candidate) =>
+      fs.existsSync(candidate),
+  );
+};
+
 /*
  * Controle para não iniciar dezenas de Chrome
  * simultaneamente se chegarem várias requisições.
@@ -320,12 +344,39 @@ const launchBrowser = async () => {
     userDataDir,
   );
 
+  const canUseRealBrowser =
+    hasLinuxDisplay() ||
+    hasXvfb();
+
+  const headless =
+    process.platform === "linux" &&
+    !canUseRealBrowser
+      ? "new"
+      : false;
+
+  const disableXvfb =
+    process.platform !== "linux" ||
+    !hasXvfb();
+
+  console.log(
+    "[Chrome] Headless:",
+    headless,
+  );
+  console.log(
+    "[Chrome] Xvfb:",
+    disableXvfb
+      ? "desativado"
+      : "ativado",
+  );
+
   try {
     const result = await connect({
       /*
-       * O puppeteer-real-browser fica mais estável em modo real.
+       * Usa modo real quando há display/Xvfb. Sem Xvfb,
+       * cai para headless para evitar ECONNREFUSED.
        */
-      headless: false,
+      headless:
+        headless,
 
       args:
         PUPPETEER_ARGS,
@@ -342,7 +393,7 @@ const launchBrowser = async () => {
         true,
 
       disableXvfb:
-        false,
+        disableXvfb,
 
       connectOption: {
         timeout:
