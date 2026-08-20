@@ -50,16 +50,14 @@ const LOCAL_HOSTS = new Set([
  *
  * Procuramos automaticamente o executável.
  *
- * NÃO usamos PUPPETEER_EXECUTABLE_PATH.
+ * Nao usamos PUPPETEER_EXECUTABLE_PATH.
  */
 
 const findChromeExecutable = () => {
   const candidates = [];
 
   /*
-   * Permite CHROME_PATH caso exista no ambiente.
-   *
-   * Não usamos PUPPETEER_EXECUTABLE_PATH.
+   * Permite caminho manual caso exista no ambiente.
    */
   if (process.env.CHROME_PATH) {
     candidates.push(
@@ -276,9 +274,6 @@ if (!CHROME_EXECUTABLE) {
  *
  * Não colocamos dezenas de flags aqui.
  *
- * O puppeteer-real-browser / chrome-launcher
- * já monta suas próprias flags.
- *
  * Mantemos somente as flags necessárias
  * para o ambiente do container.
  */
@@ -286,7 +281,6 @@ const PUPPETEER_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
-  "--disable-blink-features=AutomationControlled",
 ];
 
 /*
@@ -329,59 +323,36 @@ const launchBrowser = async () => {
   try {
     const result = await connect({
       /*
-       * Headless porque o Easypanel não precisa
-       * de interface gráfica.
+       * O puppeteer-real-browser fica mais estável em modo real.
        */
-      headless: true,
+      headless: false,
 
-      /*
-       * Poucas flags.
-       *
-       * O puppeteer-real-browser já trata
-       * as flags internas do Chrome.
-       */
-      args: PUPPETEER_ARGS,
+      args:
+        PUPPETEER_ARGS,
 
-      /*
-       * Chrome REAL encontrado no cache.
-       *
-       * Não usamos:
-       *
-       * PUPPETEER_EXECUTABLE_PATH
-       *
-       * O caminho é passado diretamente aqui.
-       */
       customConfig: {
         chromePath:
           CHROME_EXECUTABLE,
 
         userDataDir:
           userDataDir,
-
-        /*
-         * Deixa o chrome-launcher escolher
-         * uma porta livre para o DevTools.
-         */
-        port: 0,
       },
 
-      /*
-       * Não iniciar Xvfb.
-       */
-      disableXvfb: true,
+      turnstile:
+        true,
 
-      /*
-       * Mantém suporte ao Turnstile.
-       */
-      turnstile: true,
+      disableXvfb:
+        false,
 
-      /*
-       * Tempo para o Chrome iniciar
-       * e para o Puppeteer conectar.
-       */
       connectOption: {
-        timeout: 120000,
-        defaultViewport: null,
+        timeout:
+          120000,
+
+        defaultViewport: {
+          width: 1080,
+          height: 1920,
+          deviceScaleFactor: 2,
+        },
       },
     });
 
