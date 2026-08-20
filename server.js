@@ -1,6 +1,7 @@
 const express = require("express");
 const axios = require("axios");
 const { connect } = require("puppeteer-real-browser");
+const puppeteer = require("puppeteer");
 const cheerio = require("cheerio");
 const ffmpeg = require("fluent-ffmpeg");
 const fs = require("fs");
@@ -230,8 +231,89 @@ const findChromeExecutable = () => {
   );
 };
 
+const findChromeHeadlessShellExecutable = () => {
+  const puppeteerCache =
+    process.env.PUPPETEER_CACHE_DIR ||
+    path.join(
+      os.homedir(),
+      ".cache",
+      "puppeteer",
+    );
+
+  const chromeHeadlessShellDir = path.join(
+    puppeteerCache,
+    "chrome-headless-shell",
+  );
+
+  if (!fs.existsSync(chromeHeadlessShellDir)) {
+    return null;
+  }
+
+  const recursiveFind = (
+    directory,
+    maxDepth = 6,
+    depth = 0,
+  ) => {
+    if (
+      depth > maxDepth ||
+      !fs.existsSync(directory)
+    ) {
+      return null;
+    }
+
+    let entries;
+
+    try {
+      entries = fs.readdirSync(
+        directory,
+        {
+          withFileTypes: true,
+        },
+      );
+    } catch (error) {
+      return null;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(
+        directory,
+        entry.name,
+      );
+
+      if (
+        entry.isFile() &&
+        entry.name === "chrome-headless-shell"
+      ) {
+        return fullPath;
+      }
+
+      if (entry.isDirectory()) {
+        const found = recursiveFind(
+          fullPath,
+          maxDepth,
+          depth + 1,
+        );
+
+        if (found) {
+          return found;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  return recursiveFind(
+    chromeHeadlessShellDir,
+    6,
+  );
+};
+
 const CHROME_EXECUTABLE =
   findChromeExecutable();
+
+const CHROME_HEADLESS_SHELL_EXECUTABLE =
+  findChromeHeadlessShellExecutable();
 
 console.log("");
 console.log(
@@ -254,6 +336,11 @@ console.log(
 console.log(
   "Chrome:",
   CHROME_EXECUTABLE ||
+    "NOT FOUND",
+);
+console.log(
+  "Chrome Headless Shell:",
+  CHROME_HEADLESS_SHELL_EXECUTABLE ||
     "NOT FOUND",
 );
 console.log(
@@ -284,6 +371,9 @@ const PUPPETEER_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
+  "--disable-gpu",
+  "--no-zygote",
+  "--disable-software-rasterizer",
   "--disable-blink-features=AutomationControlled",
 ];
 
@@ -1403,45 +1493,73 @@ const renderImageWithPuppeteer =
   async (
     htmlContent,
   ) => {
-    return withBrowser(
-      async (page) => {
-        await page.setUserAgent(
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        );
+    let browser;
+    const renderExecutable =
+      CHROME_HEADLESS_SHELL_EXECUTABLE ||
+      CHROME_EXECUTABLE;
 
-        await page.setViewport(
-          {
+    try {
+      console.log(
+        "[Render] Executavel:",
+        renderExecutable,
+      );
+
+      browser =
+        await puppeteer.launch({
+          executablePath:
+            renderExecutable,
+
+          headless:
+            "new",
+
+          args:
+            PUPPETEER_ARGS,
+
+          defaultViewport: {
             width: 1080,
             height: 1920,
             deviceScaleFactor: 2,
           },
-        );
 
-        await page.setContent(
-          htmlContent,
-          {
-            waitUntil:
-              "networkidle0",
+          timeout:
+            120000,
+        });
 
-            timeout: 60000,
-          },
-        );
+      const page =
+        await browser.newPage();
 
-        await new Promise(
-          (resolve) =>
-            setTimeout(
-              resolve,
-              1000,
-            ),
-        );
+      await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      );
 
-        return await page.screenshot(
-          {
-            type: "png",
-          },
-        );
-      },
-    );
+      await page.setContent(
+        htmlContent,
+        {
+          waitUntil:
+            "networkidle0",
+
+          timeout:
+            60000,
+        },
+      );
+
+      await new Promise(
+        (resolve) =>
+          setTimeout(
+            resolve,
+            1000,
+          ),
+      );
+
+      return await page.screenshot({
+        type:
+          "png",
+      });
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
+    }
   };
 
 /* ============================================================
