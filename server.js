@@ -40,6 +40,9 @@ const LOCAL_HOSTS = new Set([
   "0.0.0.0",
 ]);
 
+const FALLBACK_PLAYER_IMAGE_PATH =
+  "/img/bg.jpeg";
+
 /* ============================================================
    CHROME / PUPPETEER
    ============================================================ */
@@ -778,9 +781,44 @@ app.use(
   }),
 );
 
+app.use(
+  "/img",
+  express.static(
+    path.join(
+      __dirname,
+      "img",
+    ),
+    {
+      maxAge:
+        "1h",
+    },
+  ),
+);
+
 /* ============================================================
    UTILITÁRIOS
    ============================================================ */
+
+const absoluteRequestUrl =
+  (
+    req,
+    pathname,
+  ) => {
+    const proto =
+      req.headers[
+        "x-forwarded-proto"
+      ] ||
+      req.protocol ||
+      "https";
+
+    const host =
+      req.headers[
+        "x-forwarded-host"
+      ] ||
+      req.headers.host;
+
+    return `${proto}://${host}${pathname}`;
+  };
 
 const toHighRes = (
   url,
@@ -3267,6 +3305,12 @@ app.post(
         );
       }
 
+      const fallbackLocalImageUrl =
+        absoluteRequestUrl(
+          req,
+          FALLBACK_PLAYER_IMAGE_PATH,
+        );
+
       return res.json({
         player_url:
           playerUrl,
@@ -3275,11 +3319,13 @@ app.post(
           playerId,
 
         gallery_image_url:
-          galleryImageUrl,
+          galleryImageUrl ||
+          fallbackLocalImageUrl,
 
         image_url:
           galleryImageUrl ||
-          fallbackImageUrl,
+          fallbackImageUrl ||
+          fallbackLocalImageUrl,
 
         history:
           history.value,
