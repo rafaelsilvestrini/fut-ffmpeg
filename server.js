@@ -34,6 +34,13 @@ const TRANSFERMARKT_BASE_URL =
 const TRANSFERMARKT_API_BASE_URL =
   "https://tmapi.transfermarkt.technology";
 
+const TRANSFERMARKT_GRAPH_BASE_URLS = [
+  TRANSFERMARKT_BASE_URL,
+  "https://www.transfermarkt.us",
+  "https://www.transfermarkt.co.uk",
+  "https://www.transfermarkt.de",
+];
+
 const ALLOWED_DOMAIN = "fibrazil.es";
 
 const LOCAL_HOSTS = new Set([
@@ -1869,43 +1876,96 @@ const fetchTransfermarktMarketValueListWithPuppeteer =
     }
   };
 
+const fetchTransfermarktMarketValueListFromEndpoint =
+  async (
+    playerId,
+    playerUrl,
+  ) => {
+    const baseUrls =
+      [
+        new URL(
+          playerUrl,
+        ).origin,
+        ...TRANSFERMARKT_GRAPH_BASE_URLS,
+      ].filter(
+        (baseUrl, index, list) =>
+          baseUrl &&
+          list.indexOf(
+            baseUrl,
+          ) === index,
+      );
+
+    for (const baseUrl of baseUrls) {
+      const graphUrl =
+        `${baseUrl}/ceapi/marketValueDevelopment/graph/${playerId}`;
+
+      try {
+        const response =
+          await axios.get(
+            graphUrl,
+            {
+              timeout:
+                30000,
+
+              validateStatus:
+                () => true,
+
+              headers: {
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+
+                "Accept-Language":
+                  "en-US,en;q=0.9",
+
+                Referer:
+                  playerUrl,
+
+                "X-Requested-With":
+                  "XMLHttpRequest",
+
+                Accept:
+                  "application/json,text/plain,*/*",
+              },
+            },
+          );
+
+        const list =
+          Array.isArray(
+            response.data?.list,
+          )
+            ? response.data.list
+            : [];
+
+        if (
+          list.length > 0
+        ) {
+          return list;
+        }
+
+        console.warn(
+          `[Transfermarkt Player] Endpoint sem historico: ${graphUrl} status ${response.status}`,
+        );
+      } catch (error) {
+        console.warn(
+          `[Transfermarkt Player] Falha no endpoint ${graphUrl}:`,
+          error.message,
+        );
+      }
+    }
+
+    return [];
+  };
+
 const fetchTransfermarktMarketValueHistory =
   async (
     playerId,
     playerUrl,
   ) => {
-    const response =
-      await axios.get(
-        `${TRANSFERMARKT_BASE_URL}/ceapi/marketValueDevelopment/graph/${playerId}`,
-        {
-          timeout:
-            30000,
-
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
-
-            "Accept-Language":
-              "en-US,en;q=0.9",
-
-            Referer:
-              playerUrl,
-
-            "X-Requested-With":
-              "XMLHttpRequest",
-
-            Accept:
-              "application/json,text/plain,*/*",
-          },
-        },
-      );
-
     const list =
-      Array.isArray(
-        response.data?.list,
-      )
-        ? response.data.list
-        : [];
+      await fetchTransfermarktMarketValueListFromEndpoint(
+        playerId,
+        playerUrl,
+      );
 
     if (
       list.length > 0
