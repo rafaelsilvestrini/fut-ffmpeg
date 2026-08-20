@@ -1501,11 +1501,7 @@ const renderImageWithPuppeteer =
         renderExecutable,
       );
 
-      browser =
-        await puppeteer.launch({
-          executablePath:
-            renderExecutable,
-
+      const launchOptions = {
           headless:
             "new",
 
@@ -1520,7 +1516,17 @@ const renderImageWithPuppeteer =
 
           timeout:
             120000,
-        });
+      };
+
+      if (renderExecutable) {
+        launchOptions.executablePath =
+          renderExecutable;
+      }
+
+      browser =
+        await puppeteer.launch(
+          launchOptions,
+        );
 
       const page =
         await browser.newPage();
