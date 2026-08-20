@@ -57,6 +57,14 @@ const findChromeExecutable = () => {
   const candidates = [];
 
   /*
+   * Preferimos o Chrome estavel do sistema, como no projeto flight.
+   */
+  candidates.push(
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+  );
+
+  /*
    * Permite caminho manual caso exista no ambiente.
    */
   if (process.env.CHROME_PATH) {
@@ -65,12 +73,7 @@ const findChromeExecutable = () => {
     );
   }
 
-  /*
-   * Caminhos comuns no Linux.
-   */
   candidates.push(
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
     "/usr/bin/chromium",
     "/usr/bin/chromium-browser",
     "/opt/google/chrome/chrome",
@@ -348,6 +351,11 @@ const launchBrowser = async () => {
 
       args:
         PUPPETEER_ARGS,
+
+      customConfig: {
+        chromePath:
+          CHROME_EXECUTABLE,
+      },
 
       turnstile:
         true,
