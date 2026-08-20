@@ -332,7 +332,9 @@ const launchBrowser = async () => {
   );
   console.log(
     "[Chrome] Xvfb:",
-    "desativado",
+    process.env.DISPLAY
+      ? `display ${process.env.DISPLAY}`
+      : "sem display",
   );
 
   try {
