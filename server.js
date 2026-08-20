@@ -227,81 +227,8 @@ const findChromeExecutable = () => {
   );
 };
 
-const findChromeHeadlessShellExecutable = () => {
-  const puppeteerCache =
-    process.env.PUPPETEER_CACHE_DIR ||
-    path.join(
-      os.homedir(),
-      ".cache",
-      "puppeteer",
-    );
-
-  const shellCacheDir = path.join(
-    puppeteerCache,
-    "chrome-headless-shell",
-  );
-
-  if (!fs.existsSync(shellCacheDir)) {
-    return null;
-  }
-
-  const versions = fs
-    .readdirSync(shellCacheDir, {
-      withFileTypes: true,
-    })
-    .filter(
-      (entry) =>
-        entry.isDirectory(),
-    )
-    .map(
-      (entry) => entry.name,
-    )
-    .sort()
-    .reverse();
-
-  for (const version of versions) {
-    const versionDir = path.join(
-      shellCacheDir,
-      version,
-    );
-
-    const possibleExecutables = [
-      path.join(
-        versionDir,
-        "chrome-headless-shell-linux64",
-        "chrome-headless-shell",
-      ),
-
-      path.join(
-        versionDir,
-        "chrome-headless-shell-linux",
-        "chrome-headless-shell",
-      ),
-
-      path.join(
-        versionDir,
-        "chrome-headless-shell",
-      ),
-    ];
-
-    for (const executable of possibleExecutables) {
-      if (
-        fs.existsSync(executable) &&
-        fs.statSync(executable).isFile()
-      ) {
-        return executable;
-      }
-    }
-  }
-
-  return null;
-};
-
 const CHROME_EXECUTABLE =
   findChromeExecutable();
-
-const CHROME_HEADLESS_SHELL_EXECUTABLE =
-  findChromeHeadlessShellExecutable();
 
 console.log("");
 console.log(
@@ -324,11 +251,6 @@ console.log(
 console.log(
   "Chrome:",
   CHROME_EXECUTABLE ||
-    "NOT FOUND",
-);
-console.log(
-  "Chrome Headless Shell:",
-  CHROME_HEADLESS_SHELL_EXECUTABLE ||
     "NOT FOUND",
 );
 console.log(
@@ -359,31 +281,8 @@ const PUPPETEER_ARGS = [
   "--no-sandbox",
   "--disable-setuid-sandbox",
   "--disable-dev-shm-usage",
+  "--disable-blink-features=AutomationControlled",
 ];
-
-const hasLinuxDisplay = () => {
-  if (process.platform !== "linux") {
-    return true;
-  }
-
-  return Boolean(
-    process.env.DISPLAY,
-  );
-};
-
-const hasXvfb = () => {
-  if (process.platform !== "linux") {
-    return false;
-  }
-
-  return [
-    "/usr/bin/Xvfb",
-    "/usr/bin/xvfb-run",
-  ].some(
-    (candidate) =>
-      fs.existsSync(candidate),
-  );
-};
 
 /*
  * Controle para não iniciar dezenas de Chrome
@@ -422,53 +321,18 @@ const launchBrowser = async () => {
     userDataDir,
   );
 
-  const canUseRealBrowser =
-    hasLinuxDisplay() ||
-    hasXvfb();
-
-  const needsHeadlessRuntime =
-    process.platform === "linux" &&
-    !canUseRealBrowser;
-
-  const executable =
-    needsHeadlessRuntime &&
-    CHROME_HEADLESS_SHELL_EXECUTABLE
-      ? CHROME_HEADLESS_SHELL_EXECUTABLE
-      : CHROME_EXECUTABLE;
-
   const headless =
-    needsHeadlessRuntime &&
-    !CHROME_HEADLESS_SHELL_EXECUTABLE
-      ? "new"
+    process.platform === "linux"
+      ? true
       : false;
 
-  const disableXvfb =
-    process.platform !== "linux" ||
-    !hasXvfb();
-
-  const args =
-    needsHeadlessRuntime
-      ? [
-          ...PUPPETEER_ARGS,
-          "--disable-gpu",
-          "--no-zygote",
-          "--single-process",
-        ]
-      : PUPPETEER_ARGS;
-
-  console.log(
-    "[Chrome] Executavel efetivo:",
-    executable,
-  );
   console.log(
     "[Chrome] Headless:",
     headless,
   );
   console.log(
     "[Chrome] Xvfb:",
-    disableXvfb
-      ? "desativado"
-      : "ativado",
+    "desativado",
   );
 
   try {
@@ -481,24 +345,13 @@ const launchBrowser = async () => {
         headless,
 
       args:
-        args,
-
-      customConfig: {
-        chromePath:
-          executable,
-
-        userDataDir:
-          userDataDir,
-
-        logLevel:
-          "info",
-      },
+        PUPPETEER_ARGS,
 
       turnstile:
         true,
 
       disableXvfb:
-        disableXvfb,
+        true,
 
       connectOption: {
         timeout:
@@ -1542,6 +1395,10 @@ const renderImageWithPuppeteer =
   ) => {
     return withBrowser(
       async (page) => {
+        await page.setUserAgent(
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        );
+
         await page.setViewport(
           {
             width: 1080,
