@@ -1501,7 +1501,6 @@ const fetchFirstGalleryImageWithPuppeteer =
 
           if (
             [
-              "image",
               "media",
               "font",
             ].includes(
@@ -1530,12 +1529,38 @@ const fetchFirstGalleryImageWithPuppeteer =
         },
       );
 
+      await page.evaluate(
+        async () => {
+          for (let i = 0; i < 6; i += 1) {
+            window.scrollBy(
+              0,
+              Math.floor(
+                window.innerHeight * 0.8,
+              ),
+            );
+
+            await new Promise(
+              (resolve) =>
+                setTimeout(
+                  resolve,
+                  500,
+                ),
+            );
+          }
+
+          window.scrollTo(
+            0,
+            0,
+          );
+        },
+      );
+
       try {
         await page.waitForSelector(
           'img[src*="/foto/galerie/"]',
           {
             timeout:
-              15000,
+              25000,
           },
         );
       } catch (error) {
@@ -1554,37 +1579,8 @@ const fetchFirstGalleryImageWithPuppeteer =
     }
   };
 
-const fetchTransfermarktMarketValueHistory =
-  async (
-    playerId,
-  ) => {
-    const response =
-      await axios.get(
-        `${TRANSFERMARKT_BASE_URL}/ceapi/marketValueDevelopment/graph/${playerId}`,
-        {
-          timeout:
-            30000,
-
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
-
-            "Accept-Language":
-              "en-US,en;q=0.9",
-
-            Accept:
-              "application/json,text/plain,*/*",
-          },
-        },
-      );
-
-    const list =
-      Array.isArray(
-        response.data?.list,
-      )
-        ? response.data.list
-        : [];
-
+const mapTransfermarktMarketValueHistory =
+  (list) => {
     const clubLogosByClub =
       new Map();
 
@@ -1651,6 +1647,161 @@ const fetchTransfermarktMarketValueHistory =
     );
   };
 
+const fetchTransfermarktMarketValueListWithPuppeteer =
+  async (
+    playerId,
+    playerUrl,
+  ) => {
+    let browser;
+    const renderExecutable =
+      CHROME_EXECUTABLE ||
+      CHROME_HEADLESS_SHELL_EXECUTABLE;
+
+    try {
+      const launchOptions = {
+        headless:
+          "new",
+
+        args:
+          PUPPETEER_ARGS,
+
+        defaultViewport: {
+          width: 390,
+          height: 900,
+          deviceScaleFactor: 1,
+        },
+
+        timeout:
+          60000,
+      };
+
+      if (renderExecutable) {
+        launchOptions.executablePath =
+          renderExecutable;
+      }
+
+      browser =
+        await puppeteer.launch(
+          launchOptions,
+        );
+
+      const page =
+        await browser.newPage();
+
+      await page.setCacheEnabled(
+        false,
+      );
+
+      await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+      );
+
+      await page.goto(
+        playerUrl,
+        {
+          waitUntil:
+            "domcontentloaded",
+
+          timeout:
+            45000,
+        },
+      );
+
+      const data =
+        await page.evaluate(
+          async (id) => {
+            const response =
+              await fetch(
+                `/ceapi/marketValueDevelopment/graph/${id}`,
+                {
+                  headers: {
+                    accept:
+                      "application/json,text/plain,*/*",
+                  },
+
+                  credentials:
+                    "include",
+                },
+              );
+
+            return response.json();
+          },
+          playerId,
+        );
+
+      return Array.isArray(
+        data?.list,
+      )
+        ? data.list
+        : [];
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
+    }
+  };
+
+const fetchTransfermarktMarketValueHistory =
+  async (
+    playerId,
+    playerUrl,
+  ) => {
+    const response =
+      await axios.get(
+        `${TRANSFERMARKT_BASE_URL}/ceapi/marketValueDevelopment/graph/${playerId}`,
+        {
+          timeout:
+            30000,
+
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+
+            "Accept-Language":
+              "en-US,en;q=0.9",
+
+            Referer:
+              playerUrl,
+
+            "X-Requested-With":
+              "XMLHttpRequest",
+
+            Accept:
+              "application/json,text/plain,*/*",
+          },
+        },
+      );
+
+    const list =
+      Array.isArray(
+        response.data?.list,
+      )
+        ? response.data.list
+        : [];
+
+    if (
+      list.length > 0
+    ) {
+      return mapTransfermarktMarketValueHistory(
+        list,
+      );
+    }
+
+    console.warn(
+      "[Transfermarkt Player] Endpoint JSON retornou vazio; tentando via navegador.",
+    );
+
+    const browserList =
+      await fetchTransfermarktMarketValueListWithPuppeteer(
+        playerId,
+        playerUrl,
+      );
+
+    return mapTransfermarktMarketValueHistory(
+      browserList,
+    );
+  };
+
 const absoluteTransfermarktUrl =
   (url) => {
     if (!url) {
@@ -1711,9 +1862,16 @@ const formatTransfermarktApiValue =
       return "";
     }
 
+    const euro =
+      String.fromCharCode(
+        8364,
+      );
+
     return value
       .replace(
-        /^€/,
+        new RegExp(
+          `^${euro}`,
+        ),
         "",
       )
       .replace(
@@ -1728,7 +1886,7 @@ const formatTransfermarktApiValue =
         /k$/i,
         " mil",
       )
-      .trim() + " €";
+      .trim() + ` ${euro}`;
   };
 
 const normalizeClubLogoUrl =
@@ -3251,6 +3409,7 @@ app.post(
         await Promise.allSettled([
           fetchTransfermarktMarketValueHistory(
             playerId,
+            playerUrl,
           ),
 
           fetchTransfermarktPlayerHtml(
