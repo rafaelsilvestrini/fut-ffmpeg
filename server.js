@@ -3151,10 +3151,9 @@ ${
 .brand-logo-container {
   position: absolute;
   top: 60px;
-  left: 0;
-  width: 100%;
+  right: 60px;
   display: flex;
-  justify-content: center;
+  justify-content: flex-end;
   align-items: center;
   z-index: 4;
 }
@@ -3170,8 +3169,8 @@ ${
 }
 
 .brand-logo {
-  max-width: 320px;
-  max-height: 115px;
+  max-width: 250px;
+  max-height: 92px;
   object-fit: contain;
   display: block;
 }
@@ -3218,17 +3217,24 @@ ${
 .financial-info {
   display: flex;
   justify-content: center;
-  gap: 24px;
+  align-items: stretch;
+  gap: 22px;
+  width: 100%;
 }
 
 .info-card {
   background: rgba(18,18,18,0.85);
   border: 1px solid rgba(255,255,255,0.15);
   backdrop-filter: blur(15px);
-  padding: 26px 30px;
+  padding: 26px 28px;
   border-radius: 16px;
   text-align: center;
-  width: 430px;
+  width: 450px;
+  min-height: 245px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
 
@@ -3239,29 +3245,34 @@ ${
 
 .info-label {
   color: #FFFFFF;
-  font-size: 36px;
+  font-size: 34px;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 1.2px;
+  letter-spacing: 0;
   line-height: 1.05;
+  width: 100%;
 }
 
 .info-sublabel {
   color: #A0A0A0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0;
   line-height: 1.1;
   margin-top: 6px;
-  margin-bottom: 10px;
+  margin-bottom: 14px;
+  width: 100%;
 }
 
 .info-value {
   color: #FFFFFF;
-  font-size: 96px;
+  font-size: 78px;
   font-weight: 900;
-  line-height: 1;
+  line-height: 0.98;
+  width: 100%;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .info-card.highlight .info-value {
