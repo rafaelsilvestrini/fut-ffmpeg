@@ -1,26 +1,46 @@
 FROM node:22-bookworm-slim
 
-# Instala o necessário, incluindo o xvfb para simular interface gráfica
+ENV NODE_ENV=production
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+ENV CHROME_PATH=/usr/bin/chromium
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
-    xvfb \
-    libnss3 \
+    ffmpeg \
+    fonts-liberation \
+    libasound2 \
     libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libatspi2.0-0 \
+    libcairo2 \
     libcups2 \
-    libxkbcommon0 \
-    libgtk-3-0 \
-    libasound2t64 \
+    libdbus-1-3 \
+    libdrm2 \
+    libexpat1 \
     libgbm1 \
-    libxshmfence1 \
+    libglib2.0-0 \
+    libgtk-3-0 \
     libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libx11-6 \
+    libxcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    libxshmfence1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 COPY . .
 
-# Comando de start usando o xvfb igual ao projeto que funciona
-CMD ["xvfb-run", "--server-args=-screen 0 1280x720x24", "node", "server.js"]
+EXPOSE 3000
+
+CMD ["node", "--expose-gc", "server.js"]
