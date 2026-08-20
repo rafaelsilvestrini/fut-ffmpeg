@@ -31,6 +31,9 @@ const TRANSFERMARKT_LATEST_TRANSFERS_URL =
 const TRANSFERMARKT_BASE_URL =
   "https://www.transfermarkt.com";
 
+const TRANSFERMARKT_API_BASE_URL =
+  "https://tmapi.transfermarkt.technology";
+
 const ALLOWED_DOMAIN = "fibrazil.es";
 
 const LOCAL_HOSTS = new Set([
@@ -1445,6 +1448,68 @@ const parseFallbackProfileImageUrl =
     );
   };
 
+const fetchFirstGalleryImageFromApi =
+  async (
+    playerId,
+    playerUrl,
+  ) => {
+    const response =
+      await axios.get(
+        `${TRANSFERMARKT_API_BASE_URL}/player/${playerId}/gallery`,
+        {
+          timeout:
+            30000,
+
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+
+            "Accept-Language":
+              "en-US,en;q=0.9",
+
+            Origin:
+              TRANSFERMARKT_BASE_URL,
+
+            Referer:
+              playerUrl,
+
+            Accept:
+              "application/json,text/plain,*/*",
+          },
+        },
+      );
+
+    const images =
+      response.data?.data?.images;
+
+    if (
+      !Array.isArray(
+        images,
+      )
+    ) {
+      return "";
+    }
+
+    const image =
+      images.find(
+        (item) =>
+          typeof item?.url ===
+            "string" &&
+          item.url.includes(
+            "/foto/galerie/",
+          ),
+      ) ||
+      images.find(
+        (item) =>
+          typeof item?.url ===
+          "string",
+      );
+
+    return absoluteTransfermarktUrl(
+      image?.url || "",
+    );
+  };
+
 const fetchFirstGalleryImageWithPuppeteer =
   async (
     playerUrl,
@@ -1707,7 +1772,7 @@ const fetchTransfermarktMarketValueListWithPuppeteer =
         },
       );
 
-      const data =
+      const result =
         await page.evaluate(
           async (id) => {
             const response =
@@ -1724,15 +1789,78 @@ const fetchTransfermarktMarketValueListWithPuppeteer =
                 },
               );
 
-            return response.json();
+            const text =
+              await response.text();
+
+            if (!text) {
+              return {
+                ok:
+                  false,
+
+                status:
+                  response.status,
+
+                data:
+                  null,
+              };
+            }
+
+            try {
+              return {
+                ok:
+                  response.ok,
+
+                status:
+                  response.status,
+
+                data:
+                  JSON.parse(
+                    text,
+                  ),
+              };
+            } catch (error) {
+              return {
+                ok:
+                  false,
+
+                status:
+                  response.status,
+
+                data:
+                  null,
+
+                body:
+                  text.slice(
+                    0,
+                    200,
+                  ),
+              };
+            }
           },
           playerId,
         );
 
+      if (
+        !result.ok ||
+        !Array.isArray(
+          result.data?.list,
+        )
+      ) {
+        console.warn(
+          `[Transfermarkt Player] Resposta do navegador sem JSON valido. Status: ${result.status}`,
+        );
+
+        if (result.body) {
+          console.warn(
+            `[Transfermarkt Player] Corpo recebido: ${result.body}`,
+          );
+        }
+      }
+
       return Array.isArray(
-        data?.list,
+        result.data?.list,
       )
-        ? data.list
+        ? result.data.list
         : [];
     } finally {
       if (browser) {
@@ -3443,6 +3571,21 @@ app.post(
       if (!galleryImageUrl) {
         try {
           galleryImageUrl =
+            await fetchFirstGalleryImageFromApi(
+              playerId,
+              playerUrl,
+            );
+        } catch (error) {
+          console.warn(
+            "[Transfermarkt Player] Falha ao buscar galeria via API:",
+            error.message,
+          );
+        }
+      }
+
+      if (!galleryImageUrl) {
+        try {
+          galleryImageUrl =
             await fetchFirstGalleryImageWithPuppeteer(
               playerUrl,
             );
@@ -3482,8 +3625,8 @@ app.post(
           fallbackLocalImageUrl,
 
         image_url:
-          galleryImageUrl ||
           fallbackImageUrl ||
+          galleryImageUrl ||
           fallbackLocalImageUrl,
 
         history:
