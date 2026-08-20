@@ -7,6 +7,7 @@ const ffmpeg = require("fluent-ffmpeg");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const zlib = require("zlib");
 
 const app = express();
 
@@ -52,6 +53,142 @@ const LOCAL_HOSTS = new Set([
 
 const FALLBACK_PLAYER_IMAGE_PATH =
   "/img/bg.jpeg";
+
+const HISTORY_PACK_PREFIX =
+  "h1.";
+
+const toBase64Url =
+  (buffer) =>
+    buffer
+      .toString(
+        "base64",
+      )
+      .replace(
+        /\+/g,
+        "-",
+      )
+      .replace(
+        /\//g,
+        "_",
+      )
+      .replace(
+        /=+$/g,
+        "",
+      );
+
+const fromBase64Url =
+  (value) => {
+    const base64 =
+      value
+        .replace(
+          /-/g,
+          "+",
+        )
+        .replace(
+          /_/g,
+          "/",
+        );
+
+    return Buffer.from(
+      base64.padEnd(
+        Math.ceil(
+          base64.length / 4,
+        ) * 4,
+        "=",
+      ),
+      "base64",
+    );
+  };
+
+const packMarketValueHistory =
+  (history = []) => {
+    const compactHistory =
+      history.map(
+        (item) => [
+          item.year || "",
+          item.value || "",
+          item.club_logo_url || "",
+        ],
+      );
+
+    const payload =
+      Buffer.from(
+        JSON.stringify(
+          compactHistory,
+        ),
+        "utf8",
+      );
+
+    return (
+      HISTORY_PACK_PREFIX +
+      toBase64Url(
+        zlib.deflateRawSync(
+          payload,
+        ),
+      )
+    );
+  };
+
+const unpackMarketValueHistory =
+  (packedHistory) => {
+    if (
+      typeof packedHistory !==
+        "string" ||
+      !packedHistory.startsWith(
+        HISTORY_PACK_PREFIX,
+      )
+    ) {
+      return [];
+    }
+
+    const compressed =
+      fromBase64Url(
+        packedHistory.slice(
+          HISTORY_PACK_PREFIX.length,
+        ),
+      );
+
+    const json =
+      zlib
+        .inflateRawSync(
+          compressed,
+        )
+        .toString(
+          "utf8",
+        );
+
+    const compactHistory =
+      JSON.parse(
+        json,
+      );
+
+    if (
+      !Array.isArray(
+        compactHistory,
+      )
+    ) {
+      return [];
+    }
+
+    return compactHistory.map(
+      (item) => ({
+        year:
+          String(
+            item?.[0] || "",
+          ),
+
+        value:
+          String(
+            item?.[1] || "",
+          ),
+
+        club_logo_url:
+          String(
+            item?.[2] || "",
+          ),
+      }),
+    );
+  };
 
 /* ============================================================
    CHROME / PUPPETEER
@@ -3880,7 +4017,10 @@ app.post(
           FALLBACK_PLAYER_IMAGE_PATH,
         );
 
-      return res.json({
+      const historyValue =
+        history.value;
+
+      const responsePayload = {
         player_url:
           playerUrl,
 
@@ -3896,9 +4036,28 @@ app.post(
           galleryImageUrl ||
           fallbackLocalImageUrl,
 
-        history:
-          history.value,
-      });
+        history_count:
+          historyValue.length,
+
+        history_packed:
+          packMarketValueHistory(
+            historyValue,
+          ),
+      };
+
+      if (
+        req.body.include_history ===
+          true ||
+        req.query.include_history ===
+          "true"
+      ) {
+        responsePayload.history =
+          historyValue;
+      }
+
+      return res.json(
+        responsePayload,
+      );
     } catch (error) {
       console.error(
         "[Transfermarkt Player] Erro:",
@@ -4089,6 +4248,8 @@ app.post(
 
         transfermarkt_html,
 
+        history_packed,
+
         history = [],
       } = req.body;
 
@@ -4096,9 +4257,20 @@ app.post(
         "[Market Value] Iniciando geração...",
       );
 
-      let marketHistory = [
-        ...history,
-      ];
+      let marketHistory =
+        history_packed
+          ? unpackMarketValueHistory(
+              history_packed,
+            )
+          : [
+              ...(
+                Array.isArray(
+                  history,
+                )
+                  ? history
+                  : []
+              ),
+            ];
 
       /*
        * Se não vier history mas vier HTML,
