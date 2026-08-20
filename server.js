@@ -1455,6 +1455,45 @@ const parseFallbackProfileImageUrl =
     );
   };
 
+const fetchTransfermarktPlayerPortraitFromApi =
+  async (
+    playerId,
+    playerUrl,
+  ) => {
+    const response =
+      await axios.get(
+        `${TRANSFERMARKT_API_BASE_URL}/players?ids[]=${playerId}`,
+        {
+          timeout:
+            30000,
+
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+
+            "Accept-Language":
+              "en-US,en;q=0.9",
+
+            Origin:
+              TRANSFERMARKT_BASE_URL,
+
+            Referer:
+              playerUrl,
+
+            Accept:
+              "application/json,text/plain,*/*",
+          },
+        },
+      );
+
+    const player =
+      response.data?.data?.[0];
+
+    return absoluteTransfermarktUrl(
+      player?.portraitUrl || "",
+    );
+  };
+
 const fetchFirstGalleryImageFromApi =
   async (
     playerId,
@@ -1719,6 +1758,134 @@ const mapTransfermarktMarketValueHistory =
     );
   };
 
+const formatTransfermarktNumericMarketValue =
+  (value) => {
+    const numberValue =
+      Number(
+        value,
+      );
+
+    if (
+      !Number.isFinite(
+        numberValue,
+      ) ||
+      numberValue <= 0
+    ) {
+      return "";
+    }
+
+    const euro =
+      String.fromCharCode(
+        8364,
+      );
+
+    if (
+      numberValue >=
+      1000000
+    ) {
+      const millions =
+        numberValue / 1000000;
+
+      return `${Number.isInteger(
+        millions,
+      )
+        ? millions
+        : millions.toFixed(
+            1,
+          )}M ${euro}`;
+    }
+
+    if (
+      numberValue >=
+      1000
+    ) {
+      const thousands =
+        numberValue / 1000;
+
+      return `${Number.isInteger(
+        thousands,
+      )
+        ? thousands
+        : thousands.toFixed(
+            1,
+          )} mil ${euro}`;
+    }
+
+    return `${numberValue} ${euro}`;
+  };
+
+const mapTransfermarktMarketValueHistoryFromApi =
+  (history) =>
+    history.map(
+      (item) => {
+        const determined =
+          item.marketValue?.determined ||
+          "";
+
+        return {
+          year:
+            determined
+              ? String(
+                  new Date(
+                    determined,
+                  ).getUTCFullYear(),
+                )
+              : "",
+
+          value:
+            formatTransfermarktNumericMarketValue(
+              item.marketValue?.value,
+            ),
+
+          club_logo_url:
+            item.clubId
+              ? `https://img.a.transfermarkt.technology/wappen/medium/${item.clubId}.png`
+              : "",
+        };
+      },
+    );
+
+const fetchTransfermarktMarketValueHistoryFromApi =
+  async (
+    playerId,
+    playerUrl,
+  ) => {
+    const response =
+      await axios.get(
+        `${TRANSFERMARKT_API_BASE_URL}/player/${playerId}/market-value-history`,
+        {
+          timeout:
+            30000,
+
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+
+            "Accept-Language":
+              "en-US,en;q=0.9",
+
+            Origin:
+              TRANSFERMARKT_BASE_URL,
+
+            Referer:
+              playerUrl,
+
+            Accept:
+              "application/json,text/plain,*/*",
+          },
+        },
+      );
+
+    const history =
+      response.data?.data?.history;
+
+    return Array.isArray(
+      history,
+    )
+      ? history
+      : [];
+  };
+
 const fetchTransfermarktMarketValueListWithPuppeteer =
   async (
     playerId,
@@ -1961,6 +2128,31 @@ const fetchTransfermarktMarketValueHistory =
     playerId,
     playerUrl,
   ) => {
+    try {
+      const apiHistory =
+        await fetchTransfermarktMarketValueHistoryFromApi(
+          playerId,
+          playerUrl,
+        );
+
+      if (
+        apiHistory.length > 0
+      ) {
+        return mapTransfermarktMarketValueHistoryFromApi(
+          apiHistory,
+        );
+      }
+
+      console.warn(
+        "[Transfermarkt Player] API market-value-history retornou vazia; tentando endpoint do grafico.",
+      );
+    } catch (error) {
+      console.warn(
+        "[Transfermarkt Player] Falha na API market-value-history:",
+        error.message,
+      );
+    }
+
     const list =
       await fetchTransfermarktMarketValueListFromEndpoint(
         playerId,
@@ -3620,13 +3812,28 @@ app.post(
             )
           : "";
 
-      const fallbackImageUrl =
+      let fallbackImageUrl =
         profileHtmlResult.status ===
         "fulfilled"
           ? parseFallbackProfileImageUrl(
               profileHtmlResult.value,
             )
           : "";
+
+      if (!fallbackImageUrl) {
+        try {
+          fallbackImageUrl =
+            await fetchTransfermarktPlayerPortraitFromApi(
+              playerId,
+              playerUrl,
+            );
+        } catch (error) {
+          console.warn(
+            "[Transfermarkt Player] Falha ao buscar portrait via API:",
+            error.message,
+          );
+        }
+      }
 
       if (!galleryImageUrl) {
         try {
