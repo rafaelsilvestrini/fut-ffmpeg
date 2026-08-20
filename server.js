@@ -1315,6 +1315,394 @@ const describeTransfermarktHtml =
     };
   };
 
+const fetchTransfermarktPlayerHtml =
+  async (
+    playerUrl,
+  ) => {
+    const response =
+      await axios.get(
+        playerUrl,
+        {
+          timeout:
+            30000,
+
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+
+            "Accept-Language":
+              "en-US,en;q=0.9",
+
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          },
+        },
+      );
+
+    return response.data;
+  };
+
+const parseFirstGalleryImageUrl =
+  (htmlContent) => {
+    const $ =
+      cheerio.load(
+        htmlContent || "",
+      );
+
+    const selectors = [
+      "swiper-slide.gallery-image img.slider__img",
+      "swiper-slide img.slider__img",
+      "img.slider__img",
+      'img[src*="/foto/galerie/"]',
+    ];
+
+    for (const selector of selectors) {
+      const element =
+        $(selector)
+          .first();
+
+      const url =
+        element.attr(
+          "src",
+        ) ||
+        element.attr(
+          "content",
+        ) ||
+        "";
+
+      if (url) {
+        return absoluteTransfermarktUrl(
+          url,
+        );
+      }
+    }
+
+    return "";
+  };
+
+const parseFallbackProfileImageUrl =
+  (htmlContent) => {
+    const $ =
+      cheerio.load(
+        htmlContent || "",
+      );
+
+    const element =
+      $(
+        'img.spielerbild, meta[property="og:image"]',
+      )
+        .first();
+
+    const url =
+      element.attr(
+        "src",
+      ) ||
+      element.attr(
+        "content",
+      ) ||
+      "";
+
+    return absoluteTransfermarktUrl(
+      url,
+    );
+  };
+
+const fetchFirstGalleryImageWithPuppeteer =
+  async (
+    playerUrl,
+  ) => {
+    let browser;
+    const renderExecutable =
+      CHROME_EXECUTABLE ||
+      CHROME_HEADLESS_SHELL_EXECUTABLE;
+
+    try {
+      const launchOptions = {
+        headless:
+          "new",
+
+        args:
+          PUPPETEER_ARGS,
+
+        defaultViewport: {
+          width: 390,
+          height: 900,
+          deviceScaleFactor: 1,
+        },
+
+        timeout:
+          60000,
+      };
+
+      if (renderExecutable) {
+        launchOptions.executablePath =
+          renderExecutable;
+      }
+
+      browser =
+        await puppeteer.launch(
+          launchOptions,
+        );
+
+      const page =
+        await browser.newPage();
+
+      await page.setCacheEnabled(
+        false,
+      );
+
+      await page.setRequestInterception(
+        true,
+      );
+
+      page.on(
+        "request",
+        (request) => {
+          const resourceType =
+            request.resourceType();
+
+          if (
+            [
+              "image",
+              "media",
+              "font",
+            ].includes(
+              resourceType,
+            )
+          ) {
+            return request.abort();
+          }
+
+          return request.continue();
+        },
+      );
+
+      await page.setUserAgent(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+      );
+
+      await page.goto(
+        playerUrl,
+        {
+          waitUntil:
+            "domcontentloaded",
+
+          timeout:
+            45000,
+        },
+      );
+
+      try {
+        await page.waitForSelector(
+          'img[src*="/foto/galerie/"]',
+          {
+            timeout:
+              15000,
+          },
+        );
+      } catch (error) {
+        return "";
+      }
+
+      return await page.$eval(
+        'img[src*="/foto/galerie/"]',
+        (img) =>
+          img.src,
+      );
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
+    }
+  };
+
+const fetchTransfermarktMarketValueHistory =
+  async (
+    playerId,
+  ) => {
+    const response =
+      await axios.get(
+        `${TRANSFERMARKT_BASE_URL}/ceapi/marketValueDevelopment/graph/${playerId}`,
+        {
+          timeout:
+            30000,
+
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
+
+            "Accept-Language":
+              "en-US,en;q=0.9",
+
+            Accept:
+              "application/json,text/plain,*/*",
+          },
+        },
+      );
+
+    const list =
+      Array.isArray(
+        response.data?.list,
+      )
+        ? response.data.list
+        : [];
+
+    const clubLogosByClub =
+      new Map();
+
+    for (const item of list) {
+      const clubName =
+        item.verein ||
+        "";
+
+      const logo =
+        normalizeClubLogoUrl(
+          item.wappen,
+        );
+
+      if (
+        clubName &&
+        logo
+      ) {
+        clubLogosByClub.set(
+          clubName,
+          logo,
+        );
+      }
+    }
+
+    return list.map(
+      (item) => {
+        const clubName =
+          item.verein ||
+          "";
+
+        const logo =
+          normalizeClubLogoUrl(
+            item.wappen,
+          );
+
+        const date =
+          item.datum_mw ||
+          "";
+
+        const yearMatch =
+          date.match(
+            /(\d{4})$/,
+          );
+
+        return {
+          year:
+            yearMatch
+              ? yearMatch[1]
+              : "",
+
+          value:
+            formatTransfermarktApiValue(
+              item.mw,
+            ),
+
+          club_logo_url:
+            logo ||
+            clubLogosByClub.get(
+              clubName,
+            ) ||
+            "",
+        };
+      },
+    );
+  };
+
+const absoluteTransfermarktUrl =
+  (url) => {
+    if (!url) {
+      return "";
+    }
+
+    try {
+      return new URL(
+        url,
+        TRANSFERMARKT_BASE_URL,
+      ).href;
+    } catch (error) {
+      return "";
+    }
+  };
+
+const extractTransfermarktPlayerId =
+  (playerUrl) => {
+    if (!playerUrl) {
+      return "";
+    }
+
+    const match =
+      playerUrl.match(
+        /\/spieler\/(\d+)/,
+      );
+
+    return match
+      ? match[1]
+      : "";
+  };
+
+const isTransfermarktUrl =
+  (playerUrl) => {
+    try {
+      const hostname =
+        new URL(
+          playerUrl,
+        )
+          .hostname
+          .toLowerCase();
+
+      return (
+        hostname ===
+          "transfermarkt.com" ||
+        hostname.endsWith(
+          ".transfermarkt.com",
+        )
+      );
+    } catch (error) {
+      return false;
+    }
+  };
+
+const formatTransfermarktApiValue =
+  (value) => {
+    if (!value) {
+      return "";
+    }
+
+    return value
+      .replace(
+        /^€/,
+        "",
+      )
+      .replace(
+        /\.00m$/i,
+        "M",
+      )
+      .replace(
+        /m$/i,
+        "M",
+      )
+      .replace(
+        /k$/i,
+        " mil",
+      )
+      .trim() + " €";
+  };
+
+const normalizeClubLogoUrl =
+  (url) =>
+    absoluteTransfermarktUrl(
+      url,
+    )
+      .replace(
+        /\/wappen\/profil\//,
+        "/wappen/medium/",
+      );
+
 /* ============================================================
    SCRAPE
    ============================================================ */
@@ -2774,6 +3162,137 @@ app.get(
       return res.status(500).json({
         error:
           "Erro ao fazer scraping dos dados da Transfermarkt",
+
+        details:
+          error.message,
+
+        stack:
+          process.env.NODE_ENV ===
+          "production"
+            ? undefined
+            : error.stack,
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/scrape-transfermarkt-player-market-value",
+  async (req, res) => {
+    try {
+      const {
+        player_url,
+      } = req.body;
+
+      const playerUrl =
+        absoluteTransfermarktUrl(
+          player_url,
+        );
+
+      const playerId =
+        extractTransfermarktPlayerId(
+          playerUrl,
+        );
+
+      if (
+        !playerId ||
+        !isTransfermarktUrl(
+          playerUrl,
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "player_url invalida. Envie uma URL de jogador da Transfermarkt contendo /spieler/{id}.",
+        });
+      }
+
+      const [
+        history,
+        profileHtmlResult,
+      ] =
+        await Promise.allSettled([
+          fetchTransfermarktMarketValueHistory(
+            playerId,
+          ),
+
+          fetchTransfermarktPlayerHtml(
+            playerUrl,
+          ),
+        ]);
+
+      if (
+        history.status ===
+        "rejected"
+      ) {
+        throw history.reason;
+      }
+
+      let galleryImageUrl =
+        profileHtmlResult.status ===
+        "fulfilled"
+          ? parseFirstGalleryImageUrl(
+              profileHtmlResult.value,
+            )
+          : "";
+
+      const fallbackImageUrl =
+        profileHtmlResult.status ===
+        "fulfilled"
+          ? parseFallbackProfileImageUrl(
+              profileHtmlResult.value,
+            )
+          : "";
+
+      if (!galleryImageUrl) {
+        try {
+          galleryImageUrl =
+            await fetchFirstGalleryImageWithPuppeteer(
+              playerUrl,
+            );
+        } catch (error) {
+          console.warn(
+            "[Transfermarkt Player] Falha ao renderizar galeria:",
+            error.message,
+          );
+        }
+      }
+
+      if (
+        profileHtmlResult.status ===
+        "rejected"
+      ) {
+        console.warn(
+          "[Transfermarkt Player] Falha ao buscar galeria:",
+          profileHtmlResult.reason.message,
+        );
+      }
+
+      return res.json({
+        player_url:
+          playerUrl,
+
+        player_id:
+          playerId,
+
+        gallery_image_url:
+          galleryImageUrl,
+
+        image_url:
+          galleryImageUrl ||
+          fallbackImageUrl,
+
+        history:
+          history.value,
+      });
+    } catch (error) {
+      console.error(
+        "[Transfermarkt Player] Erro:",
+        error,
+      );
+
+      return res.status(500).json({
+        error:
+          "Erro ao buscar historico de valor de mercado do jogador",
 
         details:
           error.message,
