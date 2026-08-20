@@ -63,6 +63,10 @@ const findChromeExecutable = () => {
   candidates.push(
     "/usr/bin/google-chrome-stable",
     "/usr/bin/google-chrome",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/opt/google/chrome/chrome",
+    "/opt/google/chrome/google-chrome",
   );
 
   /*
@@ -73,13 +77,6 @@ const findChromeExecutable = () => {
       process.env.CHROME_PATH,
     );
   }
-
-  candidates.push(
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/opt/google/chrome/chrome",
-    "/opt/google/chrome/google-chrome",
-  );
 
   for (const candidate of candidates) {
     if (
@@ -1495,8 +1492,8 @@ const renderImageWithPuppeteer =
   ) => {
     let browser;
     const renderExecutable =
-      CHROME_HEADLESS_SHELL_EXECUTABLE ||
-      CHROME_EXECUTABLE;
+      CHROME_EXECUTABLE ||
+      CHROME_HEADLESS_SHELL_EXECUTABLE;
 
     try {
       console.log(
