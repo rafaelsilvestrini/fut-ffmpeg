@@ -3138,7 +3138,7 @@ ${
   top: 60px;
   left: 60px;
   color: rgba(255,255,255,0.45);
-  font-size: 24px;
+  font-size: 48px;
   font-weight: 800;
   letter-spacing: 1.5px;
   text-shadow: 0 2px 8px rgba(0,0,0,0.8);
@@ -3195,20 +3195,20 @@ ${
   background: rgba(0,0,0,0.7);
   border: 1px solid rgba(63,158,64,0.5);
   color: #3F9E40;
-  padding: 10px 30px;
+  padding: 18px 42px;
   border-radius: 24px;
   text-align: center;
 }
 
 .season-main {
-  font-size: 28px;
+  font-size: 56px;
   font-weight: 800;
   letter-spacing: 2px;
   text-transform: uppercase;
 }
 
 .season-sub {
-  font-size: 14px;
+  font-size: 28px;
   font-weight: 700;
   color: #A0A0A0;
   letter-spacing: 1px;
@@ -3218,17 +3218,17 @@ ${
 .financial-info {
   display: flex;
   justify-content: center;
-  gap: 30px;
+  gap: 24px;
 }
 
 .info-card {
   background: rgba(18,18,18,0.85);
   border: 1px solid rgba(255,255,255,0.15);
   backdrop-filter: blur(15px);
-  padding: 20px 34px;
+  padding: 26px 30px;
   border-radius: 16px;
   text-align: center;
-  min-width: 310px;
+  width: 430px;
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
 
@@ -3239,26 +3239,29 @@ ${
 
 .info-label {
   color: #FFFFFF;
-  font-size: 18px;
+  font-size: 36px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 1.2px;
+  line-height: 1.05;
 }
 
 .info-sublabel {
   color: #A0A0A0;
-  font-size: 12px;
+  font-size: 24px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1px;
-  margin-top: 2px;
-  margin-bottom: 6px;
+  line-height: 1.1;
+  margin-top: 6px;
+  margin-bottom: 10px;
 }
 
 .info-value {
   color: #FFFFFF;
-  font-size: 48px;
+  font-size: 96px;
   font-weight: 900;
+  line-height: 1;
 }
 
 .info-card.highlight .info-value {
@@ -3552,7 +3555,7 @@ ${
   top: 60px;
   left: 60px;
   color: rgba(255,255,255,0.45);
-  font-size: 24px;
+  font-size: 48px;
   font-weight: 800;
   letter-spacing: 1.5px;
   text-shadow: 0 2px 8px rgba(0,0,0,0.8);
@@ -3601,28 +3604,30 @@ ${
   justify-content: center;
   align-items: flex-end;
 
-  gap: 34px 20px;
+  gap: 26px 16px;
 
   z-index: 4;
 
-  max-height: 1300px;
+  max-height: 1380px;
 }
 
 .timeline-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  width: calc(33.33% - 20px);
+  gap: 10px;
+  width: calc(20% - 16px);
 }
 
 .value-tag {
   background: #FFFFFF;
   color: #000000;
-  font-size: 30px;
+  font-size: 48px;
   font-weight: 900;
-  padding: 8px 18px;
+  padding: 8px 14px;
   border-radius: 6px;
+  max-width: 100%;
+  line-height: 1.05;
 
   box-shadow:
     0 6px 20px rgba(0,0,0,0.7);
@@ -3645,9 +3650,10 @@ ${
 
 .year-label {
   color: #FFFFFF;
-  font-size: 38px;
+  font-size: 76px;
   font-weight: 900;
   letter-spacing: 1px;
+  line-height: 1;
 
   text-shadow:
     0 4px 10px rgba(0,0,0,0.9);
@@ -3680,20 +3686,22 @@ ${
 
 .subtitle-main {
   color: #3F9E40;
-  font-size: 28px;
+  font-size: 56px;
   font-weight: 900;
   letter-spacing: 3px;
   text-transform: uppercase;
-  margin-top: 6px;
+  line-height: 1.05;
+  margin-top: 10px;
 }
 
 .subtitle-sub {
   color: #A0A0A0;
-  font-size: 16px;
+  font-size: 32px;
   font-weight: 700;
   letter-spacing: 1.5px;
   text-transform: uppercase;
-  margin-top: 3px;
+  line-height: 1.1;
+  margin-top: 8px;
 }
 
 </style>
