@@ -1,5 +1,35 @@
-Adicionar na var do vps
-PUPPETEER_SKIP_DOWNLOAD = true
+cd /code
+git pull
 
-PUPPETEER_EXECUTABLE_PATH = /usr/bin/google-chrome-stable
+apt-get update
+apt-get install -y --no-install-recommends \
+  ffmpeg \
+  fonts-liberation \
+  libasound2 \
+  libatk-bridge2.0-0 \
+  libatk1.0-0 \
+  libatspi2.0-0 \
+  libcairo2 \
+  libcups2 \
+  libdbus-1-3 \
+  libdrm2 \
+  libexpat1 \
+  libgbm1 \
+  libglib2.0-0 \
+  libgtk-3-0 \
+  libnspr4 \
+  libnss3 \
+  libpango-1.0-0 \
+  libx11-6 \
+  libxcb1 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxext6 \
+  libxfixes3 \
+  libxkbcommon0 \
+  libxrandr2 \
+  libxshmfence1
 
+npm install
+node node_modules/puppeteer/install.mjs
+npm run start

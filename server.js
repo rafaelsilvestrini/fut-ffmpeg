@@ -370,9 +370,31 @@ const PUPPETEER_ARGS = [
   "--disable-dev-shm-usage",
   "--disable-gpu",
   "--no-zygote",
+  "--disable-extensions",
+  "--disable-background-networking",
+  "--disable-background-timer-throttling",
+  "--disable-default-apps",
+  "--disable-domain-reliability",
+  "--disable-features=Translate,BackForwardCache,AcceptCHFrame",
+  "--disable-hang-monitor",
+  "--disable-popup-blocking",
   "--disable-software-rasterizer",
+  "--disable-sync",
+  "--disk-cache-size=0",
+  "--media-cache-size=0",
+  "--metrics-recording-only",
+  "--mute-audio",
+  "--no-default-browser-check",
+  "--no-first-run",
+  "--renderer-process-limit=2",
   "--disable-blink-features=AutomationControlled",
 ];
+
+const LOW_RESOURCE_VIEWPORT = {
+  width: 1080,
+  height: 1920,
+  deviceScaleFactor: 1,
+};
 
 /*
  * Controle para não iniciar dezenas de Chrome
@@ -454,11 +476,8 @@ const launchBrowser = async () => {
         timeout:
           120000,
 
-        defaultViewport: {
-          width: 1080,
-          height: 1920,
-          deviceScaleFactor: 2,
-        },
+        defaultViewport:
+          LOW_RESOURCE_VIEWPORT,
       },
     });
 
@@ -1182,6 +1201,37 @@ const fetchTransfermarktHtmlWithPuppeteer =
   async () => {
     return withBrowser(
       async (page) => {
+        await page.setCacheEnabled(
+          false,
+        );
+
+        await page.setRequestInterception(
+          true,
+        );
+
+        page.on(
+          "request",
+          (request) => {
+            const resourceType =
+              request.resourceType();
+
+            if (
+              [
+                "image",
+                "media",
+                "font",
+                "stylesheet",
+              ].includes(
+                resourceType,
+              )
+            ) {
+              return request.abort();
+            }
+
+            return request.continue();
+          },
+        );
+
         await page.setUserAgent(
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36",
         );
@@ -1203,24 +1253,66 @@ const fetchTransfermarktHtmlWithPuppeteer =
             waitUntil:
               "domcontentloaded",
 
-            timeout: 60000,
+            timeout: 45000,
           },
         );
 
-        await page.waitForSelector(
-          "table.items > tbody > tr",
-          {
-            timeout: 60000,
-          },
-        );
+        try {
+          await page.waitForSelector(
+            "table.items > tbody > tr",
+            {
+              timeout: 25000,
+            },
+          );
 
-        console.log(
-          "[Transfermarkt] Tabela encontrada.",
-        );
+          console.log(
+            "[Transfermarkt] Tabela encontrada.",
+          );
+        } catch (error) {
+          console.warn(
+            "[Transfermarkt] Tabela nao apareceu no tempo limite; tentando analisar HTML recebido.",
+          );
+        }
 
         return await page.content();
       },
     );
+  };
+
+const describeTransfermarktHtml =
+  (htmlContent) => {
+    const $ =
+      cheerio.load(
+        htmlContent || "",
+      );
+
+    const title =
+      $("title")
+        .first()
+        .text()
+        .replace(
+          /\s+/g,
+          " ",
+        )
+        .trim();
+
+    const bodyText =
+      $("body")
+        .text()
+        .replace(
+          /\s+/g,
+          " ",
+        )
+        .trim()
+        .slice(
+          0,
+          240,
+        );
+
+    return {
+      title,
+      bodyText,
+    };
   };
 
 /* ============================================================
@@ -1280,6 +1372,19 @@ const scrapeLatestTransfers =
         htmlContent,
         limit,
       );
+
+    if (
+      transfers.length === 0
+    ) {
+      const pageInfo =
+        describeTransfermarktHtml(
+          htmlContent,
+        );
+
+      throw new Error(
+        `Transfermarkt nao retornou a tabela de transferencias. Titulo: ${pageInfo.title || "sem titulo"}. Inicio da pagina: ${pageInfo.bodyText || "sem conteudo"}`,
+      );
+    }
 
     return transfers;
   };
@@ -1508,11 +1613,8 @@ const renderImageWithPuppeteer =
           args:
             PUPPETEER_ARGS,
 
-          defaultViewport: {
-            width: 1080,
-            height: 1920,
-            deviceScaleFactor: 2,
-          },
+          defaultViewport:
+            LOW_RESOURCE_VIEWPORT,
 
           timeout:
             120000,
@@ -1530,6 +1632,10 @@ const renderImageWithPuppeteer =
 
       const page =
         await browser.newPage();
+
+      await page.setCacheEnabled(
+        false,
+      );
 
       await page.setUserAgent(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -1554,10 +1660,15 @@ const renderImageWithPuppeteer =
           ),
       );
 
-      return await page.screenshot({
+      const screenshot =
+        await page.screenshot({
         type:
           "png",
       });
+
+      await page.close();
+
+      return screenshot;
     } finally {
       if (browser) {
         await browser.close();
@@ -1670,8 +1781,11 @@ const convertImageToMp4 =
             "-preset",
             "ultrafast",
 
+            "-threads",
+            "1",
+
             "-crf",
-            "26",
+            "28",
 
             "-pix_fmt",
             "yuv420p",
@@ -1695,7 +1809,7 @@ const convertImageToMp4 =
             )
 
             .audioBitrate(
-              "128k",
+              "96k",
             )
 
             .audioFilters(
