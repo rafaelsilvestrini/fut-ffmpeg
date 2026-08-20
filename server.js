@@ -1592,7 +1592,7 @@ const parseFallbackProfileImageUrl =
     );
   };
 
-const fetchTransfermarktPlayerPortraitFromApi =
+const fetchTransfermarktPlayerFromApi =
   async (
     playerId,
     playerUrl,
@@ -1626,9 +1626,49 @@ const fetchTransfermarktPlayerPortraitFromApi =
     const player =
       response.data?.data?.[0];
 
+    return player || {};
+  };
+
+const fetchTransfermarktPlayerPortraitFromApi =
+  async (
+    playerId,
+    playerUrl,
+  ) => {
+    const player =
+      await fetchTransfermarktPlayerFromApi(
+        playerId,
+        playerUrl,
+      );
+
     return absoluteTransfermarktUrl(
-      player?.portraitUrl || "",
+      player.portraitUrl || "",
     );
+  };
+
+const formatTransfermarktCompactMarketValue =
+  (marketValue) => {
+    const compact =
+      marketValue?.compact;
+
+    if (
+      compact?.prefix &&
+      compact?.content &&
+      compact?.suffix
+    ) {
+      return `${compact.prefix}${compact.content}${String(
+        compact.suffix,
+      ).toLowerCase()}`;
+    }
+
+    if (
+      marketValue?.value
+    ) {
+      return formatTransfermarktNumericMarketValue(
+        marketValue.value,
+      );
+    }
+
+    return "";
   };
 
 const fetchFirstGalleryImageFromApi =
@@ -3922,6 +3962,7 @@ app.post(
       const [
         history,
         profileHtmlResult,
+        playerApiResult,
       ] =
         await Promise.allSettled([
           fetchTransfermarktMarketValueHistory(
@@ -3930,6 +3971,11 @@ app.post(
           ),
 
           fetchTransfermarktPlayerHtml(
+            playerUrl,
+          ),
+
+          fetchTransfermarktPlayerFromApi(
+            playerId,
             playerUrl,
           ),
         ]);
@@ -3956,6 +4002,19 @@ app.post(
               profileHtmlResult.value,
             )
           : "";
+
+      if (!fallbackImageUrl) {
+        if (
+          playerApiResult.status ===
+          "fulfilled"
+        ) {
+          fallbackImageUrl =
+            absoluteTransfermarktUrl(
+              playerApiResult.value
+                .portraitUrl || "",
+            );
+        }
+      }
 
       if (!fallbackImageUrl) {
         try {
@@ -4020,6 +4079,16 @@ app.post(
       const historyValue =
         history.value;
 
+      const currentMarketValue =
+        playerApiResult.status ===
+        "fulfilled"
+          ? formatTransfermarktCompactMarketValue(
+              playerApiResult.value
+                .marketValueDetails
+                ?.current,
+            )
+          : "";
+
       const responsePayload = {
         player_url:
           playerUrl,
@@ -4035,6 +4104,9 @@ app.post(
           fallbackImageUrl ||
           galleryImageUrl ||
           fallbackLocalImageUrl,
+
+        current_market_value:
+          currentMarketValue,
 
         history_count:
           historyValue.length,
