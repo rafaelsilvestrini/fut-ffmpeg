@@ -929,6 +929,32 @@ app.use(
 );
 
 app.use(
+  (
+    error,
+    req,
+    res,
+    next,
+  ) => {
+    if (
+      error instanceof SyntaxError &&
+      "body" in error
+    ) {
+      return res.status(400).json({
+        error:
+          "JSON invalido no corpo da requisicao",
+
+        details:
+          error.message,
+      });
+    }
+
+    return next(
+      error,
+    );
+  },
+);
+
+app.use(
   "/img",
   express.static(
     path.join(
@@ -979,6 +1005,28 @@ const toHighRes = (
     "/head/",
   );
 };
+
+const cleanRequestString =
+  (value) => {
+    if (
+      typeof value !==
+      "string"
+    ) {
+      return value;
+    }
+
+    const trimmed =
+      value.trim();
+
+    const markdownLink =
+      trimmed.match(
+        /^\[([^\]]+)\]\(([^)]+)\)$/,
+      );
+
+    return markdownLink
+      ? markdownLink[2]
+      : trimmed;
+  };
 
 const urlToBase64 =
   async (url) => {
@@ -1772,6 +1820,14 @@ const fetchFirstGalleryImageWithPuppeteer =
 
       const page =
         await browser.newPage();
+
+      page.setDefaultTimeout(
+        60000,
+      );
+
+      page.setDefaultNavigationTimeout(
+        60000,
+      );
 
       await page.setCacheEnabled(
         false,
@@ -2786,12 +2842,29 @@ const renderImageWithPuppeteer =
         htmlContent,
         {
           waitUntil:
-            "networkidle0",
+            "domcontentloaded",
 
           timeout:
             60000,
         },
       );
+
+      await Promise.race([
+        page.evaluate(
+          () =>
+            document.fonts
+              ? document.fonts.ready
+              : Promise.resolve(),
+        ),
+
+        new Promise(
+          (resolve) =>
+            setTimeout(
+              resolve,
+              15000,
+            ),
+        ),
+      ]);
 
       await new Promise(
         (resolve) =>
@@ -3226,14 +3299,13 @@ ${
   background: rgba(18,18,18,0.85);
   border: 1px solid rgba(255,255,255,0.15);
   backdrop-filter: blur(15px);
-  padding: 26px 28px;
+  padding: 26px 28px 24px;
   border-radius: 16px;
   text-align: center;
   width: 450px;
   min-height: 245px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+  display: grid;
+  grid-template-rows: 42px 48px 1fr;
   align-items: center;
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
@@ -3251,6 +3323,7 @@ ${
   letter-spacing: 0;
   line-height: 1.05;
   width: 100%;
+  align-self: end;
 }
 
 .info-sublabel {
@@ -3261,8 +3334,8 @@ ${
   letter-spacing: 0;
   line-height: 1.1;
   margin-top: 6px;
-  margin-bottom: 14px;
   width: 100%;
+  align-self: start;
 }
 
 .info-value {
@@ -3271,6 +3344,10 @@ ${
   font-weight: 900;
   line-height: 0.98;
   width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   overflow-wrap: break-word;
   word-break: normal;
 }
@@ -4348,10 +4425,25 @@ app.post(
         "[Market Value] Iniciando geração...",
       );
 
+      const cleanBackgroundImageUrl =
+        cleanRequestString(
+          background_image_url,
+        );
+
+      const cleanLogoUrl =
+        cleanRequestString(
+          logo_url,
+        );
+
+      const cleanHistoryPacked =
+        cleanRequestString(
+          history_packed,
+        );
+
       let marketHistory =
-        history_packed
+        cleanHistoryPacked
           ? unpackMarketValueHistory(
-              history_packed,
+              cleanHistoryPacked,
             )
           : [
               ...(
@@ -4430,11 +4522,11 @@ app.post(
       ] =
         await Promise.all([
           urlToBase64(
-            background_image_url,
+            cleanBackgroundImageUrl,
           ),
 
           urlToBase64(
-            logo_url,
+            cleanLogoUrl,
           ),
         ]);
 
