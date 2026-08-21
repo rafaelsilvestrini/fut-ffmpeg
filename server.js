@@ -2047,6 +2047,157 @@ const formatTransfermarktNumericMarketValue =
     return `${numberValue} ${euro}`;
   };
 
+const parseMarketValueAmount =
+  (value) => {
+    if (
+      value === null ||
+      value === undefined
+    ) {
+      return 0;
+    }
+
+    if (
+      typeof value ===
+        "number" &&
+      Number.isFinite(
+        value,
+      )
+    ) {
+      return value;
+    }
+
+    const normalized =
+      String(
+        value,
+      )
+        .toLowerCase()
+        .replace(
+          /€/g,
+          "",
+        )
+        .replace(
+          /\s+/g,
+          " ",
+        )
+        .trim();
+
+    const match =
+      normalized.match(
+        /(\d+(?:[.,]\d+)?)/,
+      );
+
+    if (!match) {
+      return 0;
+    }
+
+    const numberValue =
+      Number(
+        match[1].replace(
+          ",",
+          ".",
+        ),
+      );
+
+    if (
+      !Number.isFinite(
+        numberValue,
+      )
+    ) {
+      return 0;
+    }
+
+    if (
+      /\bm\b|m$|million|milhao|milhão/i.test(
+        normalized,
+      )
+    ) {
+      return (
+        numberValue *
+        1000000
+      );
+    }
+
+    if (
+      /\bk\b|k$|mil|thousand/i.test(
+        normalized,
+      )
+    ) {
+      return (
+        numberValue *
+        1000
+      );
+    }
+
+    return numberValue;
+  };
+
+const compactMarketValueHistory =
+  (history = []) => {
+    const grouped =
+      new Map();
+
+    for (const item of history) {
+      const year =
+        String(
+          item?.year || "",
+        ).trim();
+
+      const clubLogoUrl =
+        String(
+          item?.club_logo_url || "",
+        ).trim();
+
+      if (
+        !year &&
+        !clubLogoUrl
+      ) {
+        continue;
+      }
+
+      const amount =
+        parseMarketValueAmount(
+          item?.value,
+        );
+
+      const key =
+        `${year}|${clubLogoUrl}`;
+
+      const current =
+        grouped.get(
+          key,
+        );
+
+      if (
+        !current ||
+        amount >
+          current.amount
+      ) {
+        grouped.set(
+          key,
+          {
+            amount,
+            item: {
+              year,
+              value:
+                String(
+                  item?.value || "",
+                ),
+              club_logo_url:
+                clubLogoUrl,
+            },
+          },
+        );
+      }
+    }
+
+    return Array.from(
+      grouped.values(),
+    ).map(
+      (entry) =>
+        entry.item,
+    );
+  };
+
 const mapTransfermarktMarketValueHistoryFromApi =
   (history) =>
     history.map(
@@ -2371,8 +2522,10 @@ const fetchTransfermarktMarketValueHistory =
       if (
         apiHistory.length > 0
       ) {
-        return mapTransfermarktMarketValueHistoryFromApi(
-          apiHistory,
+        return compactMarketValueHistory(
+          mapTransfermarktMarketValueHistoryFromApi(
+            apiHistory,
+          ),
         );
       }
 
@@ -2395,8 +2548,10 @@ const fetchTransfermarktMarketValueHistory =
     if (
       list.length > 0
     ) {
-      return mapTransfermarktMarketValueHistory(
-        list,
+      return compactMarketValueHistory(
+        mapTransfermarktMarketValueHistory(
+          list,
+        ),
       );
     }
 
@@ -2410,8 +2565,10 @@ const fetchTransfermarktMarketValueHistory =
         playerUrl,
       );
 
-    return mapTransfermarktMarketValueHistory(
-      browserList,
+    return compactMarketValueHistory(
+      mapTransfermarktMarketValueHistory(
+        browserList,
+      ),
     );
   };
 
@@ -3682,52 +3839,56 @@ ${
 
 .timeline-container {
   position: absolute;
-  bottom: 80px;
+  bottom: 76px;
   left: 0;
   width: 100%;
-  padding: 0 40px;
+  padding: 0 54px;
 
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: flex-end;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  justify-items: center;
+  align-items: end;
 
-  gap: 26px 16px;
+  gap: 24px 18px;
 
   z-index: 4;
 
-  max-height: 1380px;
+  max-height: 1260px;
 }
 
 .timeline-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  width: calc(20% - 16px);
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
 }
 
 .value-tag {
   background: #FFFFFF;
   color: #000000;
-  font-size: 48px;
+  font-size: 36px;
   font-weight: 900;
-  padding: 8px 14px;
+  padding: 7px 10px;
   border-radius: 6px;
   max-width: 100%;
   line-height: 1.05;
+  min-width: 128px;
 
   box-shadow:
     0 6px 20px rgba(0,0,0,0.7);
 
   white-space: nowrap;
   text-transform: lowercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: clip;
 }
 
 .club-badge {
-  width: 140px;
-  height: 140px;
+  width: 112px;
+  height: 112px;
   object-fit: contain;
 
   filter:
@@ -3738,9 +3899,9 @@ ${
 
 .year-label {
   color: #FFFFFF;
-  font-size: 76px;
+  font-size: 40px;
   font-weight: 900;
-  letter-spacing: 1px;
+  letter-spacing: 0;
   line-height: 1;
 
   text-shadow:
@@ -3749,7 +3910,7 @@ ${
 
 .player-header {
   position: absolute;
-  top: 160px;
+  top: 150px;
   left: 0;
   width: 100%;
   text-align: center;
@@ -3758,7 +3919,7 @@ ${
 
 .player-title {
   color: #FFFFFF;
-  font-size: 64px;
+  font-size: 60px;
   font-weight: 900;
   letter-spacing: 3px;
   line-height: 1.05;
@@ -3774,7 +3935,7 @@ ${
 
 .subtitle-main {
   color: #3F9E40;
-  font-size: 56px;
+  font-size: 48px;
   font-weight: 900;
   letter-spacing: 3px;
   text-transform: uppercase;
@@ -3784,12 +3945,13 @@ ${
 
 .subtitle-sub {
   color: #A0A0A0;
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
   letter-spacing: 1.5px;
   text-transform: uppercase;
   line-height: 1.1;
   margin-top: 8px;
+  padding: 0 80px;
 }
 
 </style>
@@ -4492,6 +4654,11 @@ app.post(
       /*
        * Ordena por ano.
        */
+      marketHistory =
+        compactMarketValueHistory(
+          marketHistory,
+        );
+
       marketHistory.sort(
         (
           a,
