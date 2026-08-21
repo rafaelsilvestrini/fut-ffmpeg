@@ -3714,6 +3714,85 @@ ${
    HTML - MARKET VALUE
    ============================================================ */
 
+const getMarketValueTimelineLayout =
+  (count) => {
+    if (count <= 3) {
+      return {
+        columns:
+          Math.max(
+            count,
+            1,
+          ),
+        valueFont:
+          48,
+        badgeSize:
+          148,
+        yearFont:
+          54,
+        itemWidth:
+          230,
+      };
+    }
+
+    if (count === 4) {
+      return {
+        columns:
+          4,
+        valueFont:
+          42,
+        badgeSize:
+          126,
+        yearFont:
+          48,
+        itemWidth:
+          205,
+      };
+    }
+
+    if (count <= 6) {
+      return {
+        columns:
+          3,
+        valueFont:
+          44,
+        badgeSize:
+          132,
+        yearFont:
+          48,
+        itemWidth:
+          220,
+      };
+    }
+
+    if (count <= 8) {
+      return {
+        columns:
+          4,
+        valueFont:
+          38,
+        badgeSize:
+          114,
+        yearFont:
+          42,
+        itemWidth:
+          190,
+      };
+    }
+
+    return {
+      columns:
+        4,
+      valueFont:
+        34,
+      badgeSize:
+        102,
+      yearFont:
+        38,
+      itemWidth:
+        176,
+    };
+  };
+
 const generateMarketValueHtml =
   ({
     player_name,
@@ -3722,7 +3801,19 @@ const generateMarketValueHtml =
     instagram_handle,
     historyWithB64,
     lang = "pt",
-  }) => `
+  }) => {
+    const timelineLayout =
+      getMarketValueTimelineLayout(
+        historyWithB64.length,
+      );
+
+    const timelineGapWidth =
+      (
+        timelineLayout.columns -
+        1
+      ) * 18;
+
+    return `
 <!DOCTYPE html>
 <html>
 <head>
@@ -3845,10 +3936,15 @@ ${
   width: 100%;
   padding: 0 54px;
 
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  justify-items: center;
-  align-items: end;
+  --timeline-item-width: ${timelineLayout.itemWidth}px;
+  --value-font-size: ${timelineLayout.valueFont}px;
+  --badge-size: ${timelineLayout.badgeSize}px;
+  --year-font-size: ${timelineLayout.yearFont}px;
+
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-end;
 
   gap: 24px 18px;
 
@@ -3862,14 +3958,18 @@ ${
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  width: calc(
+    (100% - ${timelineGapWidth}px) /
+    ${timelineLayout.columns}
+  );
+  max-width: var(--timeline-item-width);
   min-width: 0;
 }
 
 .value-tag {
   background: #FFFFFF;
   color: #000000;
-  font-size: 36px;
+  font-size: var(--value-font-size);
   font-weight: 900;
   padding: 7px 10px;
   border-radius: 6px;
@@ -3888,8 +3988,8 @@ ${
 }
 
 .club-badge {
-  width: 112px;
-  height: 112px;
+  width: var(--badge-size);
+  height: var(--badge-size);
   object-fit: contain;
 
   filter:
@@ -3900,7 +4000,7 @@ ${
 
 .year-label {
   color: #FFFFFF;
-  font-size: 40px;
+  font-size: var(--year-font-size);
   font-weight: 900;
   letter-spacing: 0;
   line-height: 1;
@@ -4066,6 +4166,7 @@ ${
 </body>
 </html>
 `;
+  };
 
 /* ============================================================
    ROUTE: HEALTH
