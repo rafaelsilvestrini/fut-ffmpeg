@@ -2160,7 +2160,8 @@ const compactMarketValueHistory =
         );
 
       const key =
-        `${year}|${clubLogoUrl}`;
+        clubLogoUrl ||
+        year;
 
       const current =
         grouped.get(
